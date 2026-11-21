@@ -1,0 +1,52 @@
+name: Attach APK to release
+
+# 手動觸發：編出 debug APK，掛到指定的 release 上當公開下載檔。
+# Artifacts 下載要登入 GitHub，release 附件不用（公開 repo）。
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to attach the APK to
+        required: true
+        default: v0.2.0
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-attach:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install SDK packages
+        run: |
+          SDK_ROOT="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
+          SDK_BIN="$(echo "$SDK_ROOT"/cmdline-tools/*/bin | cut -d' ' -f1)"
+          export PATH="$SDK_BIN:$PATH"
+          yes | sdkmanager --licenses
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Set up Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+
+      - name: Build debug APK
+        run: |
+          rm -f local.properties
+          gradle assembleDebug --stacktrace
+
+      - name: Upload APK to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk "eyecontrol-${TAG}-debug.apk"
+          gh release upload "$TAG" "eyecontrol-${TAG}-debug.apk" --clobber
