@@ -5,6 +5,7 @@ import android.widget.Toast
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Context
+import android.content.SharedPreferences
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -48,6 +49,15 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
     private var model: GazeModel? = null
     private var cursorView: CursorOverlayView? = null
     private var controlView: ControlPanelView? = null
+
+    /** 使用者可調參數；偏好變更時即時重載，服務運作中也會生效。 */
+    @Volatile
+    private var settings = GazeSettings()
+
+    private val settingsListener =
+        SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+            settings = GazeSettings.load(this)
+        }
 
     private val filterX = OneEuroFilter(minCutoff = 0.2, beta = 0.015)
     private val filterY = OneEuroFilter(minCutoff = 0.2, beta = 0.015)
@@ -95,6 +105,11 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
 
         // 啟動前台服務通知，防止被系統記憶體回收
         startForegroundService()
+
+        // 載入使用者參數，並監聽變更即時套用
+        settings = GazeSettings.load(this)
+        getSharedPreferences(GazeSettings.PREFS_NAME, Context.MODE_PRIVATE)
+            .registerOnSharedPreferenceChangeListener(settingsListener)
 
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val bounds = wm.currentWindowMetrics.bounds
@@ -201,8 +216,8 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         val now = SystemClock.elapsedRealtime()
 
         // 偵測雙眼是否都閉合（眨眼點擊檢測）
-        val leftClosed = sample.leftOpen < BLINK_THRESHOLD
-        val rightClosed = sample.rightOpen < BLINK_THRESHOLD
+        val leftClosed = sample.leftOpen < settings.blinkThreshold
+        val rightClosed = sample.rightOpen < settings.blinkThreshold
         val bothClosed = leftClosed && rightClosed
 
         if (bothClosed) {
@@ -220,9 +235,9 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
                 isBlinking = false
                 val blinkDuration = now - blinkStartTime
                 // 故意眨眼點擊：閉眼時間在 150ms 到 600ms 之間，且非暫停模式
-                if (blinkDuration in 150..600 && now >= cooldownUntil && currentMode != ActionMode.PAUSED) {
+                if (blinkDuration in settings.blinkMinMs..settings.blinkMaxMs && now >= cooldownUntil && currentMode != ActionMode.PAUSED) {
                     triggerActionAt(lastValidX, lastValidY)
-                    cooldownUntil = now + COOLDOWN_MS
+                    cooldownUntil = now + settings.cooldownMs
                     dwellStart = now
                     currentProgress = 0f
                     return
@@ -240,8 +255,8 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             filterX.updateParams(minCutoff = 0.04, beta = 0.005)
             filterY.updateParams(minCutoff = 0.04, beta = 0.005)
         } else {
-            filterX.updateParams(minCutoff = 0.22, beta = 0.018)
-            filterY.updateParams(minCutoff = 0.22, beta = 0.018)
+            filterX.updateParams(minCutoff = settings.filterMinCutoff, beta = settings.filterBeta)
+            filterY.updateParams(minCutoff = settings.filterMinCutoff, beta = settings.filterBeta)
         }
 
         val (rawX, rawY) = m.predict(sample.features, screenW, screenH)
@@ -284,7 +299,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
                     hoverBtnIndex = btnIndex
                     hoverStart = now
                 }
-                val hp = min((now - hoverStart) / CONTROL_DWELL_MS.toFloat(), 1f)
+                val hp = min((now - hoverStart) / settings.dwellTimeMs.toFloat(), 1f)
                 controlView?.setHover(btnIndex, hp)
                 if (hp >= 1f) {
                     // 觸發切換
@@ -302,7 +317,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
                         controlView?.activeMode = currentMode
                         controlView?.invalidate()
                     }
-                    cooldownUntil = now + COOLDOWN_MS
+                    cooldownUntil = now + settings.cooldownMs
                     hoverBtnIndex = -1
                     hoverStart = now
                 }
@@ -323,17 +338,17 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             }
 
             // 處理螢幕點擊與滑動的 dwell 邏輯
-            if (hypot(x - anchorX, y - anchorY) > DWELL_RADIUS_PX) {
+            if (hypot(x - anchorX, y - anchorY) > settings.dwellRadiusPx) {
                 anchorX = x; anchorY = y; dwellStart = now
             } else if (now >= cooldownUntil) {
-                progress = min((now - dwellStart) / DWELL_TIME_MS.toFloat(), 1f)
+                progress = min((now - dwellStart) / settings.dwellTimeMs.toFloat(), 1f)
                 if (progress >= 1f) {
                     if (isAtEdge) {
                         performEdgeAction(isAtLeft, isAtRight, isAtTop, isAtBottom)
                     } else {
                         triggerActionAt(anchorX, anchorY)
                     }
-                    cooldownUntil = now + COOLDOWN_MS
+                    cooldownUntil = now + settings.cooldownMs
                     dwellStart = now
                     progress = 0f
                 }
@@ -486,6 +501,10 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
     override fun onDestroy() {
         if (instance === this) instance = null
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
+        runCatching {
+            getSharedPreferences(GazeSettings.PREFS_NAME, Context.MODE_PRIVATE)
+                .unregisterOnSharedPreferenceChangeListener(settingsListener)
+        }
         engine?.stop()
         engine = null
         cursorView?.let {
@@ -545,11 +564,6 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         }
 
         private const val TAG = "GazeService"
-        // 與校正頁一致：太高會把「往下看時眼皮半垂」誤判成眨眼，游標下不去
-        private const val BLINK_THRESHOLD = 0.08
-        private const val DWELL_RADIUS_PX = 110f  // 視線在此半徑內視為「停留」
-        private const val DWELL_TIME_MS = 1000L   // 停留 1 秒觸發點擊
-        private const val CONTROL_DWELL_MS = 1000L // 面板按鈕注視 1 秒觸發切換
-        private const val COOLDOWN_MS = 1200L     // 點擊後的不應期，避免連點
+        // 行為參數（停留時間、冷卻、眨眼、平滑）統一由 GazeSettings 提供，此處不再寫死。
     }
 }

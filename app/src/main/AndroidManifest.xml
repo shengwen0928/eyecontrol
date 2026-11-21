@@ -30,6 +30,10 @@
             android:screenOrientation="portrait"
             android:theme="@style/Theme.EyeControl.Fullscreen" />
 
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false" />
+
         <!-- 眼控核心：無障礙服務，唯一能對其他 App 注入點擊/滑動的機制 -->
         <service
             android:name=".GazeAccessibilityService"

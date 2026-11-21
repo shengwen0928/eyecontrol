@@ -46,12 +46,19 @@
             android:layout_marginTop="12dp"
             android:text="3. 開啟無障礙服務（啟動眼控）" />
 
+        <Button
+            android:id="@+id/btnSettings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="4. 參數設定（停留時間、眨眼、平滑）" />
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
             android:textSize="13sp"
-            android:text="使用說明：\n• 先完成校正，再開啟無障礙服務。\n• 校正時請固定頭部，只用眼睛看畫面上的點。\n• 眼控啟動後，視線移動藍色游標，凝視同一處約 1 秒即點擊。\n• 到「設定 → 協助工具 → 已安裝的服務」可關閉眼控。" />
+            android:text="使用說明：\n• 先完成校正，再開啟無障礙服務。\n• 校正時請固定頭部，只用眼睛看畫面上的點。\n• 眼控啟動後，視線移動藍色游標，凝視同一處達到設定的停留時間即點擊（預設 1 秒，可在「參數設定」調整）。\n• 到「設定 → 協助工具 → 已安裝的服務」可關閉眼控。" />
 
     </LinearLayout>
 </ScrollView>

@@ -36,8 +36,12 @@ class CalibrationActivity : AppCompatActivity() {
     /** 目前目標點收到的原始樣本，收滿後剔除離群值再併入訓練集。 */
     private val pointBuffer = mutableListOf<DoubleArray>()
 
+    /** 睜眼閾值：與服務共用 GazeSettings 的同一設定來源。 */
+    private var blinkThreshold = GazeSettings.DEFAULT_BLINK_THRESHOLD
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        blinkThreshold = GazeSettings.load(this).blinkThreshold
         view = CalibrationView(this)
         setContentView(view)
 
@@ -82,7 +86,7 @@ class CalibrationActivity : AppCompatActivity() {
         if (finished || points.isEmpty()) return
         if (sample == null) return
         // 眨眼/閉眼期間的樣本會污染訓練資料，丟棄
-        if (sample.leftOpen < BLINK_THRESHOLD || sample.rightOpen < BLINK_THRESHOLD) return
+        if (sample.leftOpen < blinkThreshold || sample.rightOpen < blinkThreshold) return
 
         val now = SystemClock.elapsedRealtime()
         if (now < settleUntil) return // 等視線移過去、穩定下來
@@ -232,7 +236,6 @@ class CalibrationActivity : AppCompatActivity() {
         private const val SETTLE_MS = 900L        // 每點先等 0.9 秒讓視線穩定
         private const val SAMPLES_PER_POINT = 20  // 每點收 20 幀（後續剔除離群值）
         private const val KEEP_RATIO = 0.7        // 每點保留最接近中心的 70% 樣本
-        // 睜眼閾值：看螢幕下方時眼皮自然半垂，設太高會把「往下看」誤判成眨眼
-        private const val BLINK_THRESHOLD = 0.08
+        // 睜眼閾值改由 GazeSettings 提供（與服務共用），見 blinkThreshold 欄位。
     }
 }
