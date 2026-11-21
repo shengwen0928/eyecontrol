@@ -12,7 +12,6 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import android.view.View
-import kotlin.math.hypot
 import kotlin.math.min
 
 /**
@@ -124,25 +123,35 @@ class CalibrationActivity : AppCompatActivity() {
 
     private fun finishCalibration() {
         finished = true
-        val model = GazeModel.train(allFeatures, allTargets)
+        val screenW = view.width
+        val screenH = view.height
+        val model = GazeModel.train(
+            allFeatures, allTargets,
+            screenW = screenW.toDouble(), screenH = screenH.toDouble(),
+        )
 
-        // 用訓練資料回算平均誤差，讓使用者知道這次校正品質
-        var errSum = 0.0
-        for (i in allFeatures.indices) {
-            val (px, py) = model.predict(allFeatures[i])
-            errSum += hypot(px - allTargets[i].first, py - allTargets[i].second)
-        }
-        val avgErr = (errSum / allFeatures.size).toInt()
-
+        // 訓練集誤差偏樂觀，只列出來參考；精度等級以留一法交叉驗證為準
+        val report = GazeEvaluator.evaluate(model, allFeatures, allTargets, screenW, screenH)
+        val cvErr = GazeEvaluator.leaveOnePointOut(allFeatures, allTargets, screenW, screenH)
+        val avgErr = report.inSampleMeanErrorPx.toInt()
+        val gradeErr = if (cvErr.isNaN()) avgErr else cvErr.toInt()
         val rating = when {
-            avgErr < 60 -> "極佳 🌟"
-            avgErr < 120 -> "優良 ✨"
-            avgErr < 200 -> "普通 👍"
+            gradeErr < 60 -> "極佳 🌟"
+            gradeErr < 120 -> "優良 ✨"
+            gradeErr < 200 -> "普通 👍"
             else -> "偏差 ⚠️ (建議放穩手機重新校正)"
         }
+        val worst = report.worstPoint
+        val cvText = if (cvErr.isNaN()) "—" else "${cvErr.toInt()} px"
 
         model.save(this)
-        Toast.makeText(this, "校正完成！\n精度等級：$rating\n平均誤差：$avgErr px", Toast.LENGTH_LONG).show()
+        Toast.makeText(
+            this,
+            "校正完成！\n精度等級：$rating\n訓練集平均誤差：$avgErr px\n" +
+                "留一法交叉驗證誤差：$cvText\n" +
+                "最差：第 ${worst.pointIndex + 1} 點（${worst.meanErrorPx.toInt()} px）",
+            Toast.LENGTH_LONG,
+        ).show()
         finish()
     }
 

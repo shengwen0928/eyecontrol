@@ -6,8 +6,8 @@ import org.json.JSONObject
 
 /**
  * 視線 → 螢幕座標的線性回歸模型（兩組權重：x 與 y 各一）。
- * 校正時以嶺回歸（ridge regression）解正規方程訓練；特徵僅 8 維，
- * 9 點 × 數十樣本的資料量下解 8×8 線性系統即可，不需要任何 ML 框架。
+ * 校正時以嶺回歸（ridge regression）解正規方程訓練；特徵 22 維，
+ * 9 點 × 數十樣本的資料量下解 23×23 線性系統（22 維特徵 + 1 維姿態補償項）即可，不需要任何 ML 框架。
  */
 class GazeModel(
     private val wx: DoubleArray,
@@ -48,6 +48,7 @@ class GazeModel(
             put("baseYaw", baseYaw)
             put("kx", kx)
             put("ky", ky)
+            put("version", MODEL_VERSION)
         }
         prefs(context).edit().putString(KEY, json.toString()).apply()
     }
@@ -55,6 +56,12 @@ class GazeModel(
     companion object {
         private const val PREFS = "gaze_model"
         private const val KEY = "model_json"
+
+        /**
+         * 模型存檔格式版本。特徵定義或存檔欄位改變時遞增；
+         * 舊版存檔（無 version 欄位）視為格式 v1 相容，版本不符者視為未校正。
+         */
+        private const val MODEL_VERSION = 1
 
         private fun prefs(context: Context) =
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -73,9 +80,10 @@ class GazeModel(
                 val baseYawVal = json.optDouble("baseYaw", 0.0)
                 val kxVal = json.optDouble("kx", 1.6)
                 val kyVal = json.optDouble("ky", 1.3)
+                val version = json.optInt("version", MODEL_VERSION)
                 val m = GazeModel(wxArr, wyArr, basePitchVal, baseYawVal, kxVal, kyVal)
-                // 特徵定義改版後舊模型維度不符，視為未校正
-                if (m.wx.size != GazeFeatureExtractor.DIM) null else m
+                // 版本不符或特徵維度不符，視為未校正（避免靜默誤用舊格式模型）
+                if (version != MODEL_VERSION || m.wx.size != GazeFeatureExtractor.DIM) null else m
             }.getOrNull()
         }
 
@@ -85,11 +93,15 @@ class GazeModel(
          * 嶺回歸訓練：w = (XᵀX + λI)⁻¹ Xᵀy，以高斯消去法解線性系統。
          * @param features 每筆樣本的特徵向量（維度 = GazeFeatureExtractor.DIM）
          * @param targets  對應的螢幕座標（像素）
+         * @param screenW  螢幕寬（像素）；呼叫端已知時傳入，否則由目標座標最大值估算
+         * @param screenH  螢幕高（像素）；呼叫端已知時傳入，否則由目標座標最大值估算
          */
         fun train(
             features: List<DoubleArray>,
             targets: List<Pair<Float, Float>>,
             lambda: Double = 5e-4,
+            screenW: Double? = null,
+            screenH: Double? = null,
         ): GazeModel {
             require(features.isNotEmpty() && features.size == targets.size)
             val d = features[0].size // 22
@@ -103,11 +115,16 @@ class GazeModel(
             val basePitch = pitchSum / features.size
             val baseYaw = yawSum / features.size
 
-            // 從目標座標估算螢幕維度 (CalibrationActivity 使用 8% 邊距，最大座標約在 92%)
-            val maxX = targets.maxOfOrNull { it.first } ?: 1080f
-            val maxY = targets.maxOfOrNull { it.second } ?: 2400f
-            val screenW = if (maxX > 0) (maxX / 0.92f).toDouble() else 1080.0
-            val screenH = if (maxY > 0) (maxY / 0.92f).toDouble() else 2400.0
+            // 螢幕維度：呼叫端已知時直接傳入最準（校正頁用實際 view 尺寸）；
+            // 未傳入時沿用舊估算（CalibrationActivity 使用 8% 邊距，最大座標約在 92%）
+            val sw = screenW ?: run {
+                val maxX = targets.maxOfOrNull { it.first } ?: 1080f
+                if (maxX > 0) (maxX / 0.92f).toDouble() else 1080.0
+            }
+            val sh = screenH ?: run {
+                val maxY = targets.maxOfOrNull { it.second } ?: 2400f
+                if (maxY > 0) (maxY / 0.92f).toDouble() else 2400.0
+            }
 
             // 擴展特徵向量維度，將姿勢補償項放入特徵矩陣中，利用嶺回歸同時優化 w 與 k
             val extD = d + 1
@@ -120,7 +137,7 @@ class GazeModel(
                 val (tx, _) = targets[n]
                 val curYaw = f[8]
                 val deltaYaw = curYaw - baseYaw
-                val compTermX = deltaYaw * screenW
+                val compTermX = deltaYaw * sw
 
                 val fExt = DoubleArray(extD)
                 System.arraycopy(f, 0, fExt, 0, d)
@@ -144,7 +161,7 @@ class GazeModel(
                 val (_, ty) = targets[n]
                 val curPitch = f[7]
                 val deltaPitch = curPitch - basePitch
-                val compTermY = -deltaPitch * screenH
+                val compTermY = -deltaPitch * sh
 
                 val fExt = DoubleArray(extD)
                 System.arraycopy(f, 0, fExt, 0, d)
