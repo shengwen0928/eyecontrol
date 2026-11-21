@@ -7,13 +7,22 @@ import kotlin.math.hypot
  * 一幀的視線觀測值。
  * features：餵給回歸模型的特徵向量（虹膜相對眼眶位置 + 頭部位置/距離 + 偏置項）。
  * leftOpen / rightOpen：眼睛睜開程度（眼高/眼寬），用來偵測眨眼、閉眼時凍結游標。
+ * devicePitch / deviceRoll：同一時刻的裝置姿勢（弧度，旋轉向量）；NaN = 當時沒有感測器資料。
+ * 預測時只用「與校正時的變化量」，不拿絕對角度當特徵（見 GazeModel）。
  */
 data class GazeSample(
     val features: DoubleArray,
     val leftOpen: Double,
     val rightOpen: Double,
     val timestampMs: Long,
+    val devicePitch: Double = Double.NaN,
+    val deviceRoll: Double = Double.NaN,
 )
+
+/** 臉轉向：以特徵 7（pitchRot）、8（yawRot）相對校正基準的「符號」判定方向。 */
+enum class FaceTurn {
+    CENTER, LEFT, RIGHT, UP, DOWN, UP_LEFT, UP_RIGHT, DOWN_LEFT, DOWN_RIGHT,
+}
 
 /**
  * 從 MediaPipe Face Landmarker（478 點，含虹膜）萃取視線特徵。
@@ -121,4 +130,36 @@ object GazeFeatureExtractor {
 
         return GazeSample(features, leftOpen, rightOpen, timestampMs)
     }
+
+    /**
+     * 臉轉向辨識：pitchRot / yawRot 相對校正基準（basePitch / baseYaw）的帶符號差值，
+     * 決定臉往哪個方向轉。死區 0.02（約 2% 眼距）蓋過量測雜訊；只做方向分類與記錄，
+     * 不另設門檻干預控制——真正的方向補償在 GazeModel 的 kx / ky 補償項裡（同樣帶符號）。
+     * 左右以相機影像座標為準（前鏡頭映象可能相反，實機驗證後再定）。
+     */
+    fun faceTurnDirection(f: DoubleArray, basePitch: Double, baseYaw: Double): FaceTurn {
+        val dPitch = f[7] - basePitch
+        val dYaw = f[8] - baseYaw
+        val vertical = when {
+            dPitch > FACE_TURN_DEAD_ZONE -> FaceTurn.DOWN
+            dPitch < -FACE_TURN_DEAD_ZONE -> FaceTurn.UP
+            else -> null
+        }
+        val horizontal = when {
+            dYaw > FACE_TURN_DEAD_ZONE -> FaceTurn.LEFT
+            dYaw < -FACE_TURN_DEAD_ZONE -> FaceTurn.RIGHT
+            else -> null
+        }
+        return when {
+            vertical == FaceTurn.UP && horizontal == FaceTurn.LEFT -> FaceTurn.UP_LEFT
+            vertical == FaceTurn.UP && horizontal == FaceTurn.RIGHT -> FaceTurn.UP_RIGHT
+            vertical == FaceTurn.DOWN && horizontal == FaceTurn.LEFT -> FaceTurn.DOWN_LEFT
+            vertical == FaceTurn.DOWN && horizontal == FaceTurn.RIGHT -> FaceTurn.DOWN_RIGHT
+            vertical != null -> vertical
+            horizontal != null -> horizontal
+            else -> FaceTurn.CENTER
+        }
+    }
+
+    private const val FACE_TURN_DEAD_ZONE = 0.02
 }

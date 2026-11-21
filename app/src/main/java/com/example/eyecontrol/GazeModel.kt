@@ -8,6 +8,13 @@ import org.json.JSONObject
  * 視線 → 螢幕座標的線性回歸模型（兩組權重：x 與 y 各一）。
  * 校正時以嶺回歸（ridge regression）解正規方程訓練；特徵 22 維，
  * 9 點 × 數十樣本的資料量下解 23×23 線性系統（22 維特徵 + 1 維姿態補償項）即可，不需要任何 ML 框架。
+ *
+ * 幾何修正（全部只吃「相對於校正時」的變化量，避免與臉轉向補償重複計算）：
+ * 臉轉向——特徵 7/8 的帶符號差值 × kx/ky，訓練時聯合學出；
+ * 裝置角度——旋轉向量的 pitch/roll 與校正時基準的差值，一階幾何修正（轉回＋拉伸）；
+ * 臉遠近——特徵 6（iod，臉距倒數的代理）的比值，繞螢幕中心等比縮放。
+ * 裝置與臉距修正不靠訓練資料學係數（校正時裝置不動、臉距固定，學不出來），
+ * 只靠校正基準＋幾何關係；舊模型沒有基準時修正自動關閉，重校後才生效。
  */
 class GazeModel(
     private val wx: DoubleArray,
@@ -15,11 +22,27 @@ class GazeModel(
     var basePitch: Double = 0.0,
     var baseYaw: Double = 0.0,
     var kx: Double = 1.6,
-    var ky: Double = 1.3
+    var ky: Double = 1.3,
+    /** 校正時裝置姿勢基準（弧度）；null = 舊模型、無基準，陀螺儀修正關閉。 */
+    var deviceBasePitch: Double? = null,
+    var deviceBaseRoll: Double? = null,
+    /** 校正時臉距基準（特徵 6 iod 的平均）；<= 0 = 舊模型、無基準，臉距修正關閉。 */
+    var baseIod: Double = 0.0,
 ) {
 
-    /** 預測螢幕座標（像素），並加上幾何頭部晃動補償。 */
-    fun predict(f: DoubleArray, screenW: Int = 1080, screenH: Int = 2400): Pair<Double, Double> {
+    /**
+     * 預測螢幕座標（像素）：先做幾何頭部晃動補償，再依序做裝置角度修正與臉距縮放。
+     * devicePitch / deviceRoll 為 NaN（無感測器資料）或開關關閉時，對應修正自動跳過。
+     */
+    fun predict(
+        f: DoubleArray,
+        screenW: Int = 1080,
+        screenH: Int = 2400,
+        devicePitch: Double = Double.NaN,
+        deviceRoll: Double = Double.NaN,
+        gyroCompensation: Boolean = true,
+        distanceCompensation: Boolean = true,
+    ): Pair<Double, Double> {
         var px = 0.0
         var py = 0.0
         for (i in f.indices) {
@@ -34,10 +57,33 @@ class GazeModel(
         val deltaYaw = curYaw - baseYaw
 
         // 幾何補償：使用自適應的 kx 與 ky
-        val compensatedX = px + deltaYaw * screenW * kx
-        val compensatedY = py - deltaPitch * screenH * ky
+        var outX = px + deltaYaw * screenW * kx
+        var outY = py - deltaPitch * screenH * ky
 
-        return compensatedX to compensatedY
+        // 裝置角度修正：只吃與校正基準的差值（臉與裝置一起動時，臉轉向那側已補過，這裡只補裝置本身的轉動）
+        val baseP = deviceBasePitch
+        val baseR = deviceBaseRoll
+        if (gyroCompensation && baseP != null && baseR != null &&
+            devicePitch.isFinite() && deviceRoll.isFinite()
+        ) {
+            val corrected = correctForDeviceTilt(
+                outX, outY, screenW, screenH, devicePitch, deviceRoll, baseP, baseR,
+            )
+            outX = corrected.first
+            outY = corrected.second
+        }
+
+        // 臉距縮放：iod 與距離成反比；臉靠近（iod 變大）時同一眼球轉角覆蓋的螢幕距離變小，
+        // 故繞螢幕中心等比縮小偏移量；臉遠離時反之。只吃與校正基準的比值。
+        if (distanceCompensation && baseIod > 0.0 && f.size > 6 && f[6] > 0.0) {
+            val scale = (baseIod / f[6]).coerceIn(MIN_DISTANCE_SCALE, MAX_DISTANCE_SCALE)
+            val cx = screenW / 2.0
+            val cy = screenH / 2.0
+            outX = cx + (outX - cx) * scale
+            outY = cy + (outY - cy) * scale
+        }
+
+        return outX to outY
     }
 
     /** 模型序列化：給 CalibrationStore 做情境存檔用；舊版 save()/load() 也走這裡。 */
@@ -49,6 +95,9 @@ class GazeModel(
             put("baseYaw", baseYaw)
             put("kx", kx)
             put("ky", ky)
+            put("baseIod", baseIod)
+            deviceBasePitch?.let { put("deviceBasePitch", it) }
+            deviceBaseRoll?.let { put("deviceBaseRoll", it) }
             put("version", MODEL_VERSION)
         }
         return json.toString()
@@ -85,7 +134,16 @@ class GazeModel(
                 val kxVal = json.optDouble("kx", 1.6)
                 val kyVal = json.optDouble("ky", 1.3)
                 val version = json.optInt("version", MODEL_VERSION)
-                val m = GazeModel(wxArr, wyArr, basePitchVal, baseYawVal, kxVal, kyVal)
+                // 幾何基準為選填：舊存檔沒有這幾欄時，修正自動關閉（不拿 0.0 假裝量過）
+                val deviceBasePitchVal = json.optDouble("deviceBasePitch", Double.NaN)
+                    .takeIf { it.isFinite() }
+                val deviceBaseRollVal = json.optDouble("deviceBaseRoll", Double.NaN)
+                    .takeIf { it.isFinite() }
+                val baseIodVal = json.optDouble("baseIod", 0.0)
+                val m = GazeModel(
+                    wxArr, wyArr, basePitchVal, baseYawVal, kxVal, kyVal,
+                    deviceBasePitchVal, deviceBaseRollVal, baseIodVal,
+                )
                 // 版本不符或特徵維度不符，視為未校正（避免靜默誤用舊格式模型）
                 if (version != MODEL_VERSION || m.wx.size != GazeFeatureExtractor.DIM) null else m
             }.getOrNull()
@@ -111,18 +169,23 @@ class GazeModel(
             lambda: Double = 5e-4,
             screenW: Double? = null,
             screenH: Double? = null,
+            deviceBasePitch: Double? = null,
+            deviceBaseRoll: Double? = null,
         ): GazeModel {
             require(features.isNotEmpty() && features.size == targets.size)
             val d = features[0].size // 22
 
             var pitchSum = 0.0
             var yawSum = 0.0
+            var iodSum = 0.0
             for (n in features.indices) {
                 pitchSum += features[n][7]
                 yawSum += features[n][8]
+                iodSum += features[n][6]
             }
             val basePitch = pitchSum / features.size
             val baseYaw = yawSum / features.size
+            val baseIod = iodSum / features.size
 
             // 螢幕維度：呼叫端已知時直接傳入最準（校正頁用實際 view 尺寸）；
             // 未傳入時沿用舊估算（CalibrationActivity 使用 8% 邊距，最大座標約在 92%）
@@ -186,7 +249,49 @@ class GazeModel(
             val wy = solY.copyOfRange(0, d)
             val ky = solY[d].coerceIn(0.5, 3.0) // 限制補償範圍以確保穩定
 
-            return GazeModel(wx, wy, basePitch, baseYaw, kx, ky)
+            return GazeModel(
+                wx, wy, basePitch, baseYaw, kx, ky,
+                deviceBasePitch, deviceBaseRoll, baseIod,
+            )
+        }
+
+        /** 裝置角度修正的變化量上限（弧度）：超過視為劇烈晃動，不再放大修正。 */
+        private const val MAX_DEVICE_ROLL_DELTA = 0.6
+        private const val MAX_DEVICE_PITCH_DELTA = 0.5
+
+        /** 臉距縮放比值上限：臉貼很近或離很遠時，不讓預測點被縮放出合理範圍。 */
+        private const val MIN_DISTANCE_SCALE = 0.7
+        private const val MAX_DISTANCE_SCALE = 1.4
+
+        /**
+         * 裝置角度一階幾何修正（純函數，方便以後單元測試）：
+         * 裝置相對校正姿勢轉了多少，預測點就繞螢幕中心轉回來多少；
+         * 前傾／後仰再沿垂直方向以 1/cos 拉伸（透視一階近似，支點取螢幕中心）。
+         * 旋轉方向的符號約定需實機驗證（錯了改一行）；覺得修正有害時關設定裡的開關即可。
+         */
+        fun correctForDeviceTilt(
+            x: Double,
+            y: Double,
+            screenW: Int,
+            screenH: Int,
+            devicePitch: Double,
+            deviceRoll: Double,
+            basePitch: Double,
+            baseRoll: Double,
+        ): Pair<Double, Double> {
+            val dRoll = (deviceRoll - baseRoll).coerceIn(-MAX_DEVICE_ROLL_DELTA, MAX_DEVICE_ROLL_DELTA)
+            val dPitch = (devicePitch - basePitch).coerceIn(-MAX_DEVICE_PITCH_DELTA, MAX_DEVICE_PITCH_DELTA)
+            if (dRoll == 0.0 && dPitch == 0.0) return x to y
+            val cx = screenW / 2.0
+            val cy = screenH / 2.0
+            val cos = kotlin.math.cos(dRoll)
+            val sin = kotlin.math.sin(dRoll)
+            val dx = x - cx
+            val dy = y - cy
+            val rx = dx * cos + dy * sin
+            val ry = -dx * sin + dy * cos
+            val scaleY = 1.0 / kotlin.math.cos(dPitch)
+            return (cx + rx) to (cy + ry * scaleY)
         }
 
         /** 高斯消去法（含部分主元選取）解 A·w = b。A 會被複製，不改動原矩陣。 */

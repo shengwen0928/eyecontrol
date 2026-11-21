@@ -39,11 +39,15 @@ class FaceTrackerEngine(
     private val cachedRotatedBmps = arrayOfNulls<Bitmap>(3)
     private var rotatedBmpIndex = 0
 
+    /** 裝置姿勢追蹤：每幀樣本附上當下裝置角度，供預測時做相對校正姿勢的修正。 */
+    private val orientationTracker = DeviceOrientationTracker(context)
+
     /** 關閉旗標：stop() 之後分析執行緒不得再碰 landmarker（否則對已釋放的原生物件送資料會 SIGSEGV）。 */
     @Volatile
     private var closed = false
 
     fun start(lifecycleOwner: LifecycleOwner) {
+        orientationTracker.start()
         val options = FaceLandmarker.FaceLandmarkerOptions.builder()
             .setBaseOptions(
                 BaseOptions.builder()
@@ -57,7 +61,19 @@ class FaceTrackerEngine(
                 if (face == null) {
                     onSample(null)
                 } else {
-                    onSample(GazeFeatureExtractor.extract(face, result.timestampMs()))
+                    val sample = GazeFeatureExtractor.extract(face, result.timestampMs())
+                    if (sample == null) {
+                        onSample(null)
+                    } else {
+                        val orientation = orientationTracker.snapshot()
+                        onSample(
+                            if (orientation == null) sample
+                            else sample.copy(
+                                devicePitch = orientation.pitch,
+                                deviceRoll = orientation.roll,
+                            )
+                        )
+                    }
                 }
             }
             .setErrorListener { e -> Log.e(TAG, "FaceLandmarker 錯誤", e) }
@@ -177,6 +193,7 @@ class FaceTrackerEngine(
     fun stop() {
         // 順序很重要：先立旗標擋新幀 → 停相機 → 等分析執行緒清空 → 最後才釋放原生物件
         closed = true
+        orientationTracker.stop()
         cameraProvider?.unbindAll()
         cameraProvider = null
         analysisExecutor?.let {

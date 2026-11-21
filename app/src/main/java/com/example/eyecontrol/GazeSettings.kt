@@ -19,6 +19,10 @@ data class GazeSettings(
     val blinkThreshold: Double = DEFAULT_BLINK_THRESHOLD,
     val filterMinCutoff: Double = DEFAULT_FILTER_MIN_CUTOFF,
     val filterBeta: Double = DEFAULT_FILTER_BETA,
+    /** 陀螺儀角度修正：裝置相對校正姿勢傾斜時，幾何修正預測點。 */
+    val gyroCompensation: Boolean = true,
+    /** 臉距修正：臉相對校正時靠近／遠離時，繞螢幕中心等比縮放預測偏移。 */
+    val distanceCompensation: Boolean = true,
 ) {
 
     fun clamped(): GazeSettings = copy(
@@ -42,6 +46,8 @@ data class GazeSettings(
             putLong(KEY_BLINK_THRESHOLD, blinkThreshold.toRawBits())
             putLong(KEY_FILTER_CUTOFF, filterMinCutoff.toRawBits())
             putLong(KEY_FILTER_BETA, filterBeta.toRawBits())
+            putBoolean(KEY_GYRO_COMPENSATION, gyroCompensation)
+            putBoolean(KEY_DISTANCE_COMPENSATION, distanceCompensation)
         }.apply()
     }
 
@@ -84,6 +90,8 @@ data class GazeSettings(
         private const val KEY_BLINK_THRESHOLD = "blink_threshold"
         private const val KEY_FILTER_CUTOFF = "filter_min_cutoff"
         private const val KEY_FILTER_BETA = "filter_beta"
+        private const val KEY_GYRO_COMPENSATION = "gyro_compensation"
+        private const val KEY_DISTANCE_COMPENSATION = "distance_compensation"
 
         fun load(context: Context): GazeSettings {
             val p = prefs(context)
@@ -102,6 +110,8 @@ data class GazeSettings(
                 filterBeta = Double.fromBits(
                     p.getLong(KEY_FILTER_BETA, DEFAULT_FILTER_BETA.toRawBits())
                 ),
+                gyroCompensation = p.getBoolean(KEY_GYRO_COMPENSATION, true),
+                distanceCompensation = p.getBoolean(KEY_DISTANCE_COMPENSATION, true),
             ).clamped()
         }
 

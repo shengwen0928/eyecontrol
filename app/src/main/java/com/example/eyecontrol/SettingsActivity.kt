@@ -48,6 +48,9 @@ class SettingsActivity : AppCompatActivity() {
             "%.3f".format(betaFromProgress(it))
         }
 
+        binding.switchGyro.isChecked = s.gyroCompensation
+        binding.switchDistance.isChecked = s.distanceCompensation
+
         binding.btnSave.setOnClickListener { saveAndFinish() }
         binding.btnDefaults.setOnClickListener { resetToDefaults() }
     }
@@ -82,6 +85,8 @@ class SettingsActivity : AppCompatActivity() {
             blinkThreshold = thresholdFromProgress(binding.seekThreshold.progress),
             filterMinCutoff = cutoffFromProgress(binding.seekCutoff.progress),
             filterBeta = betaFromProgress(binding.seekBeta.progress),
+            gyroCompensation = binding.switchGyro.isChecked,
+            distanceCompensation = binding.switchDistance.isChecked,
         ).clamped()
         s.save(this)
         Toast.makeText(this, "設定已儲存", Toast.LENGTH_SHORT).show()
@@ -98,6 +103,8 @@ class SettingsActivity : AppCompatActivity() {
         binding.seekThreshold.progress = progressForThreshold(d.blinkThreshold)
         binding.seekCutoff.progress = progressForCutoff(d.filterMinCutoff)
         binding.seekBeta.progress = progressForBeta(d.filterBeta)
+        binding.switchGyro.isChecked = d.gyroCompensation
+        binding.switchDistance.isChecked = d.distanceCompensation
         Toast.makeText(this, "已恢復預設值（按儲存才生效）", Toast.LENGTH_SHORT).show()
     }
 

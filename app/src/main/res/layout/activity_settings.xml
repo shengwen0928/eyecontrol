@@ -177,6 +177,27 @@
             android:textSize="13sp"
             android:gravity="end" />
 
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="幾何修正（相對於校正時的姿勢與距離）"
+            android:textSize="15sp"
+            android:layout_marginTop="20dp" />
+
+        <Switch
+            android:id="@+id/switchGyro"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="陀螺儀角度修正（手機傾斜時補償預測點）" />
+
+        <Switch
+            android:id="@+id/switchDistance"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="臉部遠近修正（臉靠近或遠離時縮放預測）" />
+
         <Button
             android:id="@+id/btnSave"
             android:layout_width="match_parent"

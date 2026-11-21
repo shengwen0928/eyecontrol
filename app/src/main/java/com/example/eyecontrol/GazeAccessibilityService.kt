@@ -46,7 +46,10 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
     override val lifecycle: Lifecycle get() = lifecycleRegistry
 
     private var engine: FaceTrackerEngine? = null
-    private var model: ZonedGazeModel? = null
+    private var model: GazeModel? = null
+
+    /** 上一次記錄的臉轉向（只在變化時寫 log，避免每幀刷 log）。 */
+    private var lastFaceTurn: FaceTurn? = null
     private var cursorView: CursorOverlayView? = null
     private var controlView: ControlPanelView? = null
 
@@ -268,7 +271,18 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             filterY.updateParams(minCutoff = settings.filterMinCutoff, beta = settings.filterBeta)
         }
 
-        val (rawX, rawY) = m.predict(sample.features, screenW, screenH)
+        val (rawX, rawY) = m.predict(
+            sample.features, screenW, screenH,
+            sample.devicePitch, sample.deviceRoll,
+            settings.gyroCompensation, settings.distanceCompensation,
+        )
+
+        // 臉轉向辨識（只記錄變化）：方向補償本身在模型裡以帶符號差值處理，這裡僅讓轉向可見
+        val faceTurn = GazeFeatureExtractor.faceTurnDirection(sample.features, m.basePitch, m.baseYaw)
+        if (faceTurn != lastFaceTurn) {
+            lastFaceTurn = faceTurn
+            Log.d(TAG, "臉轉向：$faceTurn")
+        }
         val t = sample.timestampMs / 1000.0
         val x = filterX.filter(rawX, t).toFloat().coerceIn(0f, screenW - 1f)
         val y = filterY.filter(rawY, t).toFloat().coerceIn(0f, screenH - 1f)
