@@ -47,6 +47,10 @@ class FaceTrackerEngine(
     private var closed = false
 
     fun start(lifecycleOwner: LifecycleOwner) {
+        // 防呆：同一實例重複 start 時先停舊的，否則 landmarker 與執行緒會被覆蓋洩漏；
+        // 且 stop() 置起的 closed 旗標必須重置，否則新綁定的分析收不到任何幀。
+        if (landmarker != null || analysisExecutor != null) stop()
+        closed = false
         orientationTracker.start()
         val options = FaceLandmarker.FaceLandmarkerOptions.builder()
             .setBaseOptions(

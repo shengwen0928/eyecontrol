@@ -11,6 +11,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
 import android.view.View
 import kotlin.math.min
 
@@ -35,6 +36,14 @@ class CalibrationActivity : AppCompatActivity() {
     private var settleUntil = 0L
     private var points: List<Pair<Float, Float>> = emptyList()
     private var finished = false
+
+    /** 引擎是否已啟動：onPause/onResume 交接時用，避免重複綁定或漏停。 */
+    private var engineStarted = false
+
+    /** 臉遺失回饋：最後一幀有效樣本的時間、提示是否已顯示、本點開始計時的時間。 */
+    private var lastValidSampleAt = 0L
+    private var faceLostHintShown = false
+    private var pointStartedAt = 0L
 
     /** 目前目標點收到的原始樣本，收滿後剔除離群值再併入訓練集。 */
     private val pointBuffer = mutableListOf<DoubleArray>()
@@ -73,8 +82,37 @@ class CalibrationActivity : AppCompatActivity() {
             startPoint(0)
             // 先請無障礙服務放開相機，確認釋放後才綁定自己的——避免兩邊搶相機導致畫面串流被拔掉
             GazeAccessibilityService.requestPauseForCalibration {
-                if (!isFinishing && !finished) engine.start(this)
+                if (!isFinishing && !finished &&
+                    lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+                ) {
+                    engine.start(this)
+                    engineStarted = true
+                }
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 從最近任務切回或被蓋過後回來：相機已在 onPause 放掉，重綁一次
+        if (!finished && !engineStarted && points.isNotEmpty()) {
+            GazeAccessibilityService.requestPauseForCalibration {
+                if (!isFinishing && !finished && !engineStarted &&
+                    lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+                ) {
+                    engine.start(this)
+                    engineStarted = true
+                }
+            }
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // 被蓋住或切走時先放開相機，否則舊實例佔著相機、新實例收不到幀
+        if (engineStarted) {
+            engine.stop()
+            engineStarted = false
         }
     }
 
@@ -90,17 +128,35 @@ class CalibrationActivity : AppCompatActivity() {
         pointBuffer.clear()
         pointDeviceAngles.clear()
         settleUntil = SystemClock.elapsedRealtime() + SETTLE_MS
+        pointStartedAt = SystemClock.elapsedRealtime()
         val (x, y) = points[index]
         view.showTarget(x, y, 0f, "${index + 1} / ${points.size}")
     }
 
     private fun onSample(sample: GazeSample?) {
         if (finished || points.isEmpty()) return
-        if (sample == null) return
+        val now = SystemClock.elapsedRealtime()
+        if (sample == null) {
+            // 臉遺失不再靜默：先在畫面提示，單點等太久就重採該點，避免無限卡住
+            if (!faceLostHintShown && lastValidSampleAt != 0L &&
+                now - lastValidSampleAt > FACE_LOST_HINT_MS
+            ) {
+                faceLostHintShown = true
+                view.setFaceLost(true)
+                Toast.makeText(this, "找不到臉，請把臉移回畫面中央", Toast.LENGTH_SHORT).show()
+            }
+            if (pointStartedAt != 0L && now - pointStartedAt > POINT_TIMEOUT_MS) {
+                Toast.makeText(this, "這一格等太久，重採一次", Toast.LENGTH_SHORT).show()
+                startPoint(pointIndex)
+            }
+            return
+        }
+        lastValidSampleAt = now
+        faceLostHintShown = false
+        view.setFaceLost(false)
         // 眨眼/閉眼期間的樣本會污染訓練資料，丟棄
         if (sample.leftOpen < blinkThreshold || sample.rightOpen < blinkThreshold) return
 
-        val now = SystemClock.elapsedRealtime()
         if (now < settleUntil) return // 等視線移過去、穩定下來
 
         val target = points[pointIndex]
@@ -186,6 +242,7 @@ class CalibrationActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         engine.stop()
+        engineStarted = false
         // 通知服務重新載入校正結果並接回相機
         GazeAccessibilityService.resumeAfterCalibration()
     }
@@ -196,6 +253,7 @@ class CalibrationActivity : AppCompatActivity() {
         private var ty = -1f
         private var progress = 0f
         private var label = ""
+        private var faceLost = false
 
         private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(79, 195, 247) }
         private val pulsePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -214,9 +272,18 @@ class CalibrationActivity : AppCompatActivity() {
         private val hintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.rgb(120, 120, 120); textSize = 36f; textAlign = Paint.Align.CENTER
         }
+        private val warnPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(255, 150, 120); textSize = 40f; textAlign = Paint.Align.CENTER
+        }
 
         fun showTarget(x: Float, y: Float, p: Float, text: String) {
             tx = x; ty = y; progress = p; label = text
+            invalidate()
+        }
+
+        fun setFaceLost(lost: Boolean) {
+            if (faceLost == lost) return
+            faceLost = lost
             invalidate()
         }
 
@@ -227,6 +294,9 @@ class CalibrationActivity : AppCompatActivity() {
             // 畫提示文字與進度文字
             canvas.drawText(label, width / 2f, height / 2f + 100f, textPaint)
             canvas.drawText("請保持頭部不動，用眼睛注視動態藍點", width / 2f, height / 2f + 160f, hintPaint)
+            if (faceLost) {
+                canvas.drawText("找不到臉，請把臉移回畫面中央", width / 2f, height / 2f + 220f, warnPaint)
+            }
 
             val time = System.currentTimeMillis()
             
@@ -259,6 +329,8 @@ class CalibrationActivity : AppCompatActivity() {
     companion object {
         private const val SETTLE_MS = 900L        // 每點先等 0.9 秒讓視線穩定
         private const val SAMPLES_PER_POINT = 20  // 每點收 20 幀（後續剔除離群值）
+        private const val FACE_LOST_HINT_MS = 1000L  // 連續 1 秒收不到臉就顯示提示
+        private const val POINT_TIMEOUT_MS = 10_000L // 單點 10 秒採不滿就重採該點
         /** Intent extra：要校正的情境 id（見 CalibrationStore）。 */
         const val EXTRA_PROFILE_ID = "profile_id"
 

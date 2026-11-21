@@ -28,7 +28,28 @@ class MainActivity : AppCompatActivity() {
             val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
             if (id != pendingDownloadId) return
             pendingDownloadId = -1L
+            // 只看「檔案存在」不夠：下載失敗也可能留下舊版／殘缺檔案，必須查 DownloadManager 的狀態
+            val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            var downloadOk = false
+            dm.query(DownloadManager.Query().setFilterById(id))?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val status =
+                        cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+                    val downloaded =
+                        cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
+                    val total =
+                        cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
+                    downloadOk = status == DownloadManager.STATUS_SUCCESSFUL &&
+                        (total <= 0L || downloaded >= total)
+                }
+            }
             val apkFile = UpdateChecker.downloadedApkFile(this@MainActivity)
+            if (!downloadOk) {
+                // 刪掉固定檔名的殘檔，免得之後誤裝舊版或壞檔
+                runCatching { apkFile.delete() }
+                Toast.makeText(this@MainActivity, "下載失敗，請再試一次", Toast.LENGTH_SHORT).show()
+                return
+            }
             if (!apkFile.exists()) {
                 Toast.makeText(this@MainActivity, "下載失敗，請再試一次", Toast.LENGTH_SHORT).show()
                 return

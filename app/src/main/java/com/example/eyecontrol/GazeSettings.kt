@@ -19,22 +19,38 @@ data class GazeSettings(
     val blinkThreshold: Double = DEFAULT_BLINK_THRESHOLD,
     val filterMinCutoff: Double = DEFAULT_FILTER_MIN_CUTOFF,
     val filterBeta: Double = DEFAULT_FILTER_BETA,
-    /** 陀螺儀角度修正：裝置相對校正姿勢傾斜時，幾何修正預測點。 */
-    val gyroCompensation: Boolean = true,
+    /**
+     * 陀螺儀角度修正：裝置相對校正姿勢傾斜時，幾何修正預測點。
+     * 預設關閉：特徵 7/8 是相機影像座標系的量測，分不清「頭動」與「手機動」，
+     * kx/ky 頭部補償可能已經把裝置轉動算過一次，兩邊會重複計算（pitch 方向）。
+     * 必須實機開／關對照、確認合併後誤差真的下降，才手動打開。
+     */
+    val gyroCompensation: Boolean = false,
     /** 臉距修正：臉相對校正時靠近／遠離時，繞螢幕中心等比縮放預測偏移。 */
     val distanceCompensation: Boolean = true,
 ) {
 
-    fun clamped(): GazeSettings = copy(
-        dwellTimeMs = dwellTimeMs.coerceIn(MIN_DWELL_TIME_MS, MAX_DWELL_TIME_MS),
-        cooldownMs = cooldownMs.coerceIn(MIN_COOLDOWN_MS, MAX_COOLDOWN_MS),
-        dwellRadiusPx = dwellRadiusPx.coerceIn(MIN_DWELL_RADIUS_PX, MAX_DWELL_RADIUS_PX),
-        blinkMinMs = blinkMinMs.coerceIn(MIN_BLINK_MIN_MS, MAX_BLINK_MIN_MS),
-        blinkMaxMs = blinkMaxMs.coerceIn(MIN_BLINK_MAX_MS, MAX_BLINK_MAX_MS),
-        blinkThreshold = blinkThreshold.coerceIn(MIN_BLINK_THRESHOLD, MAX_BLINK_THRESHOLD),
-        filterMinCutoff = filterMinCutoff.coerceIn(MIN_FILTER_MIN_CUTOFF, MAX_FILTER_MIN_CUTOFF),
-        filterBeta = filterBeta.coerceIn(MIN_FILTER_BETA, MAX_FILTER_BETA),
-    )
+    fun clamped(): GazeSettings {
+        // NaN 會穿透 coerceIn（比較皆 false），先換成預設值再夾範圍
+        val safeRadius = dwellRadiusPx.takeIf { it.isFinite() } ?: DEFAULT_DWELL_RADIUS_PX
+        val safeThreshold = blinkThreshold.takeIf { it.isFinite() } ?: DEFAULT_BLINK_THRESHOLD
+        val safeCutoff = filterMinCutoff.takeIf { it.isFinite() } ?: DEFAULT_FILTER_MIN_CUTOFF
+        val safeBeta = filterBeta.takeIf { it.isFinite() } ?: DEFAULT_FILTER_BETA
+        val safeBlinkMin = blinkMinMs.coerceIn(MIN_BLINK_MIN_MS, MAX_BLINK_MIN_MS)
+        // 眨眼上下限必須成有效區間：上限不得小於下限，否則眨眼點擊永遠觸發不了
+        val safeBlinkMax = blinkMaxMs.coerceIn(MIN_BLINK_MAX_MS, MAX_BLINK_MAX_MS)
+            .coerceAtLeast(safeBlinkMin)
+        return copy(
+            dwellTimeMs = dwellTimeMs.coerceIn(MIN_DWELL_TIME_MS, MAX_DWELL_TIME_MS),
+            cooldownMs = cooldownMs.coerceIn(MIN_COOLDOWN_MS, MAX_COOLDOWN_MS),
+            dwellRadiusPx = safeRadius.coerceIn(MIN_DWELL_RADIUS_PX, MAX_DWELL_RADIUS_PX),
+            blinkMinMs = safeBlinkMin,
+            blinkMaxMs = safeBlinkMax,
+            blinkThreshold = safeThreshold.coerceIn(MIN_BLINK_THRESHOLD, MAX_BLINK_THRESHOLD),
+            filterMinCutoff = safeCutoff.coerceIn(MIN_FILTER_MIN_CUTOFF, MAX_FILTER_MIN_CUTOFF),
+            filterBeta = safeBeta.coerceIn(MIN_FILTER_BETA, MAX_FILTER_BETA),
+        )
+    }
 
     fun save(context: Context) {
         prefs(context).edit().apply {
@@ -94,25 +110,30 @@ data class GazeSettings(
         private const val KEY_DISTANCE_COMPENSATION = "distance_compensation"
 
         fun load(context: Context): GazeSettings {
-            val p = prefs(context)
-            return GazeSettings(
-                dwellTimeMs = p.getLong(KEY_DWELL_TIME, DEFAULT_DWELL_TIME_MS),
-                cooldownMs = p.getLong(KEY_COOLDOWN, DEFAULT_COOLDOWN_MS),
-                dwellRadiusPx = p.getFloat(KEY_DWELL_RADIUS, DEFAULT_DWELL_RADIUS_PX),
-                blinkMinMs = p.getLong(KEY_BLINK_MIN, DEFAULT_BLINK_MIN_MS),
-                blinkMaxMs = p.getLong(KEY_BLINK_MAX, DEFAULT_BLINK_MAX_MS),
-                blinkThreshold = Double.fromBits(
-                    p.getLong(KEY_BLINK_THRESHOLD, DEFAULT_BLINK_THRESHOLD.toRawBits())
-                ),
-                filterMinCutoff = Double.fromBits(
-                    p.getLong(KEY_FILTER_CUTOFF, DEFAULT_FILTER_MIN_CUTOFF.toRawBits())
-                ),
-                filterBeta = Double.fromBits(
-                    p.getLong(KEY_FILTER_BETA, DEFAULT_FILTER_BETA.toRawBits())
-                ),
-                gyroCompensation = p.getBoolean(KEY_GYRO_COMPENSATION, true),
-                distanceCompensation = p.getBoolean(KEY_DISTANCE_COMPENSATION, true),
-            ).clamped()
+            // 存檔損毀（型別不符等）時直接回預設值，不要讓例外沿 prefs 監聽炸開服務
+            return try {
+                val p = prefs(context)
+                GazeSettings(
+                    dwellTimeMs = p.getLong(KEY_DWELL_TIME, DEFAULT_DWELL_TIME_MS),
+                    cooldownMs = p.getLong(KEY_COOLDOWN, DEFAULT_COOLDOWN_MS),
+                    dwellRadiusPx = p.getFloat(KEY_DWELL_RADIUS, DEFAULT_DWELL_RADIUS_PX),
+                    blinkMinMs = p.getLong(KEY_BLINK_MIN, DEFAULT_BLINK_MIN_MS),
+                    blinkMaxMs = p.getLong(KEY_BLINK_MAX, DEFAULT_BLINK_MAX_MS),
+                    blinkThreshold = Double.fromBits(
+                        p.getLong(KEY_BLINK_THRESHOLD, DEFAULT_BLINK_THRESHOLD.toRawBits())
+                    ),
+                    filterMinCutoff = Double.fromBits(
+                        p.getLong(KEY_FILTER_CUTOFF, DEFAULT_FILTER_MIN_CUTOFF.toRawBits())
+                    ),
+                    filterBeta = Double.fromBits(
+                        p.getLong(KEY_FILTER_BETA, DEFAULT_FILTER_BETA.toRawBits())
+                    ),
+                    gyroCompensation = p.getBoolean(KEY_GYRO_COMPENSATION, false),
+                    distanceCompensation = p.getBoolean(KEY_DISTANCE_COMPENSATION, true),
+                ).clamped()
+            } catch (e: Exception) {
+                GazeSettings()
+            }
         }
 
         private fun prefs(context: Context): SharedPreferences =

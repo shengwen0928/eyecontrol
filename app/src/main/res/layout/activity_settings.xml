@@ -189,7 +189,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:text="陀螺儀角度修正（手機傾斜時補償預測點）" />
+            android:text="陀螺儀角度修正（預設關閉：需實機開／關對照確認有效再開）" />
 
         <Switch
             android:id="@+id/switchDistance"

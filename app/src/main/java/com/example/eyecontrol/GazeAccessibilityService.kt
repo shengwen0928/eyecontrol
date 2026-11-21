@@ -6,6 +6,7 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Context
 import android.content.SharedPreferences
+import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -46,6 +47,9 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
     override val lifecycle: Lifecycle get() = lifecycleRegistry
 
     private var engine: FaceTrackerEngine? = null
+
+    /** 情境模型：profileListener 可能在非主執行緒寫入，主執行緒讀取須可見。 */
+    @Volatile
     private var model: GazeModel? = null
 
     /** 上一次記錄的臉轉向（只在變化時寫 log，避免每幀刷 log）。 */
@@ -97,6 +101,9 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
     private var lastValidX = 0f
     private var lastValidY = 0f
     private var lastCursorX = 0f
+
+    /** 是否已收到至少一幀有效游標位置：沒有之前，眨眼不得點擊（否則會點在 (0,0)）。 */
+    private var hasValidCursor = false
     private var lastCursorY = 0f
 
     private var screenW = 0
@@ -132,6 +139,21 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         startEngine()
     }
 
+    /**
+     * 螢幕旋轉時螢幕尺寸變了：預測、clamp 與面板判定全吃 screenW/screenH，
+     * 不更新會把游標卡在半邊螢幕；舊濾波狀態是舊座標系的，一併重置。
+     * 面板與游標 overlay 分別靠 gravity 與 MATCH_PARENT 跟著轉，不必重建。
+     */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val bounds = wm.currentWindowMetrics.bounds
+        screenW = bounds.width()
+        screenH = bounds.height()
+        filterX.reset()
+        filterY.reset()
+    }
+
     private fun startForegroundService() {
         val channelId = "gaze_service_channel"
         val channelName = "眼控服務通知"
@@ -158,6 +180,9 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
     /** 建立並啟動追蹤引擎；同時（重新）載入目前情境的校正模型。校正後恢復也走這裡。 */
     private fun startEngine() {
         if (pausedForCalibration) return
+        // 冪等重啟：先停舊引擎，否則新舊兩台會搶相機（舊的在背景執行緒 stop 時也可能誤殺新的）
+        engine?.stop()
+        engine = null
         val activeId = CalibrationStore.getActiveProfileId(this)
         model = CalibrationStore.loadModel(this, activeId)
         if (model == null) {
@@ -247,7 +272,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
                 isBlinking = false
                 val blinkDuration = now - blinkStartTime
                 // 故意眨眼點擊：閉眼時間在 150ms 到 600ms 之間，且非暫停模式
-                if (blinkDuration in settings.blinkMinMs..settings.blinkMaxMs && now >= cooldownUntil && currentMode != ActionMode.PAUSED) {
+                if (blinkDuration in settings.blinkMinMs..settings.blinkMaxMs && hasValidCursor && now >= cooldownUntil && currentMode != ActionMode.PAUSED) {
                     triggerActionAt(lastValidX, lastValidY)
                     cooldownUntil = now + settings.cooldownMs
                     dwellStart = now
@@ -290,6 +315,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         // 更新最後的有效位置
         lastCursorX = x
         lastCursorY = y
+        hasValidCursor = true
 
         val edgeSize = 50f
         val isAtLeft = x < edgeSize
@@ -570,8 +596,11 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             svc.pausedForCalibration = true
             // engine.stop() 會阻塞等待 analysis 執行緒排空，丟到背景執行緒避免卡主執行緒
             Thread {
-                svc.engine?.stop()
-                svc.engine = null
+                // 只停「此刻」這台引擎：若停機期間已有新引擎接手（過期恢復），絕不碰它——
+                // 曾有競態讓背景執行緒把剛建好的新引擎停掉、游標凍結到重開服務
+                val target = svc.engine
+                target?.stop()
+                if (target != null && svc.engine === target) svc.engine = null
                 svc.mainHandler.post {
                     svc.cursorView?.setCursor(null)
                     onReleased()

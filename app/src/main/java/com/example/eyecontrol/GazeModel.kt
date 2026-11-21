@@ -43,6 +43,8 @@ class GazeModel(
         gyroCompensation: Boolean = true,
         distanceCompensation: Boolean = true,
     ): Pair<Double, Double> {
+        // 特徵不足時直接失敗，不要讓 f[7]/f[8] 拋出難懂的越界錯誤
+        require(f.size >= 9) { "特徵維度不足：需要至少 9 維，實際 ${f.size} 維" }
         var px = 0.0
         var py = 0.0
         for (i in f.indices) {
@@ -60,7 +62,10 @@ class GazeModel(
         var outX = px + deltaYaw * screenW * kx
         var outY = py - deltaPitch * screenH * ky
 
-        // 裝置角度修正：只吃與校正基準的差值（臉與裝置一起動時，臉轉向那側已補過，這裡只補裝置本身的轉動）
+        // 裝置角度修正：只吃與校正基準的差值。
+        // 注意：特徵 7/8 是相機影像座標系的量測，手機轉動時它們也會變，kx/ky 項可能已把
+        // 同一裝置轉動算過一次——pitch 方向兩邊有重複計算的可能，未經實機對照驗證前預設關閉
+        // （見 GazeSettings.gyroCompensation），roll 方向因特徵已做 roll 旋轉而不受影響。
         val baseP = deviceBasePitch
         val baseR = deviceBaseRoll
         if (gyroCompensation && baseP != null && baseR != null &&
@@ -268,6 +273,8 @@ class GazeModel(
          * 裝置相對校正姿勢轉了多少，預測點就繞螢幕中心轉回來多少；
          * 前傾／後仰再沿垂直方向以 1/cos 拉伸（透視一階近似，支點取螢幕中心）。
          * 旋轉方向的符號約定需實機驗證（錯了改一行）；覺得修正有害時關設定裡的開關即可。
+         * 另注意：特徵 7/8 分不清頭動與手機動，pitch 方向可能與 kx/ky 頭部補償重複計算，
+         * 故此修正預設關閉，須實機開／關對照確認有效再開。
          */
         fun correctForDeviceTilt(
             x: Double,
