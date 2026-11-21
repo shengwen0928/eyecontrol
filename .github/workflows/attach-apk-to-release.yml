@@ -48,5 +48,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk "eyecontrol-${TAG}-debug.apk"
-          gh release upload "$TAG" "eyecontrol-${TAG}-debug.apk" --clobber
+          cp app/build/outputs/apk/debug/app-debug.apk "eyecontrol-debug.apk"
+          gh release upload "$TAG" "eyecontrol-debug.apk" --clobber
