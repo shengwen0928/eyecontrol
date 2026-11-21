@@ -34,6 +34,9 @@ android {
     }
     buildFeatures {
         viewBinding = true
+        // UpdateChecker / MainActivity 用 BuildConfig.VERSION_NAME 比對版本；
+        // AGP 8 預設不產生 BuildConfig，一定要開。
+        buildConfig = true
     }
     // MediaPipe 的 .task 模型是壓縮格式，打包時不可再壓縮，否則載入失敗。
     androidResources {
