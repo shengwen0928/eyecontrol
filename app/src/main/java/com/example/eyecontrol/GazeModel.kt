@@ -40,7 +40,8 @@ class GazeModel(
         return compensatedX to compensatedY
     }
 
-    fun save(context: Context) {
+    /** 模型序列化：給 CalibrationStore 做情境存檔用；舊版 save()/load() 也走這裡。 */
+    fun toJsonString(): String {
         val json = JSONObject().apply {
             put("wx", JSONArray(wx.toList()))
             put("wy", JSONArray(wy.toList()))
@@ -50,7 +51,11 @@ class GazeModel(
             put("ky", ky)
             put("version", MODEL_VERSION)
         }
-        prefs(context).edit().putString(KEY, json.toString()).apply()
+        return json.toString()
+    }
+
+    fun save(context: Context) {
+        prefs(context).edit().putString(KEY, toJsonString()).apply()
     }
 
     companion object {
@@ -66,8 +71,7 @@ class GazeModel(
         private fun prefs(context: Context) =
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-        fun load(context: Context): GazeModel? {
-            val raw = prefs(context).getString(KEY, null) ?: return null
+        fun fromJsonString(raw: String): GazeModel? {
             return runCatching {
                 val json = JSONObject(raw)
                 fun arr(k: String): DoubleArray {
@@ -85,6 +89,11 @@ class GazeModel(
                 // 版本不符或特徵維度不符，視為未校正（避免靜默誤用舊格式模型）
                 if (version != MODEL_VERSION || m.wx.size != GazeFeatureExtractor.DIM) null else m
             }.getOrNull()
+        }
+
+        fun load(context: Context): GazeModel? {
+            val raw = prefs(context).getString(KEY, null) ?: return null
+            return fromJsonString(raw)
         }
 
         fun exists(context: Context) = load(context) != null

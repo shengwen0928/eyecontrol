@@ -26,6 +26,41 @@
             android:textSize="15sp"
             android:layout_marginBottom="24dp" />
 
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="使用情境（每個情境各做一次 9 點校正）"
+            android:textSize="15sp"
+            android:layout_marginBottom="4dp" />
+
+        <RadioGroup
+            android:id="@+id/profileGroup"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="24dp">
+
+            <RadioButton
+                android:id="@+id/radioSitting"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="坐著" />
+
+            <RadioButton
+                android:id="@+id/radioLying"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:text="躺著" />
+
+            <RadioButton
+                android:id="@+id/radioFlat"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:text="平放" />
+        </RadioGroup>
+
         <Button
             android:id="@+id/btnCamera"
             android:layout_width="match_parent"
@@ -58,7 +93,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
             android:textSize="13sp"
-            android:text="使用說明：\n• 先完成校正，再開啟無障礙服務。\n• 校正時請固定頭部，只用眼睛看畫面上的點。\n• 眼控啟動後，視線移動藍色游標，凝視同一處達到設定的停留時間即點擊（預設 1 秒，可在「參數設定」調整）。\n• 到「設定 → 協助工具 → 已安裝的服務」可關閉眼控。" />
+            android:text="使用說明：\n• 先選使用情境（坐著／躺著／平放），每個情境各做一次 9 點校正。\n• 先完成校正，再開啟無障礙服務。\n• 校正時請固定頭部，只用眼睛看畫面上的點。\n• 眼控啟動後，視線移動藍色游標，凝視同一處達到設定的停留時間即點擊（預設 1 秒，可在「參數設定」調整）。\n• 到「設定 → 協助工具 → 已安裝的服務」可關閉眼控。" />
 
     </LinearLayout>
 </ScrollView>

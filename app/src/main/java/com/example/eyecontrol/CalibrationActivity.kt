@@ -39,9 +39,14 @@ class CalibrationActivity : AppCompatActivity() {
     /** 睜眼閾值：與服務共用 GazeSettings 的同一設定來源。 */
     private var blinkThreshold = GazeSettings.DEFAULT_BLINK_THRESHOLD
 
+    /** 本次校正的情境（由主畫面傳入，預設為目前使用中的情境）。 */
+    private var profileId = CalibrationStore.PROFILE_SITTING
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         blinkThreshold = GazeSettings.load(this).blinkThreshold
+        profileId = intent.getStringExtra(EXTRA_PROFILE_ID)
+            ?: CalibrationStore.getActiveProfileId(this)
         view = CalibrationView(this)
         setContentView(view)
 
@@ -148,10 +153,10 @@ class CalibrationActivity : AppCompatActivity() {
         val worst = report.worstPoint
         val cvText = if (cvErr.isNaN()) "—" else "${cvErr.toInt()} px"
 
-        model.save(this)
+        CalibrationStore.saveModel(this, profileId, model, cvErr.takeIf { !it.isNaN() })
         Toast.makeText(
             this,
-            "校正完成！\n精度等級：$rating\n訓練集平均誤差：$avgErr px\n" +
+            "「${CalibrationStore.profileName(profileId)}」校正完成！\n精度等級：$rating\n訓練集平均誤差：$avgErr px\n" +
                 "留一法交叉驗證誤差：$cvText\n" +
                 "最差：第 ${worst.pointIndex + 1} 點（${worst.meanErrorPx.toInt()} px）",
             Toast.LENGTH_LONG,
@@ -235,6 +240,9 @@ class CalibrationActivity : AppCompatActivity() {
     companion object {
         private const val SETTLE_MS = 900L        // 每點先等 0.9 秒讓視線穩定
         private const val SAMPLES_PER_POINT = 20  // 每點收 20 幀（後續剔除離群值）
+        /** Intent extra：要校正的情境 id（見 CalibrationStore）。 */
+        const val EXTRA_PROFILE_ID = "profile_id"
+
         private const val KEEP_RATIO = 0.7        // 每點保留最接近中心的 70% 樣本
         // 睜眼閾值改由 GazeSettings 提供（與服務共用），見 blinkThreshold 欄位。
     }

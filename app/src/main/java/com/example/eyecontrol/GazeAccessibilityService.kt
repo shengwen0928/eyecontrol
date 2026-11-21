@@ -59,6 +59,12 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             settings = GazeSettings.load(this)
         }
 
+    /** 情境或情境模型變更時即時換模型，服務運作中切換情境也會生效。 */
+    private val profileListener =
+        SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+            model = CalibrationStore.loadModel(this, CalibrationStore.getActiveProfileId(this))
+        }
+
     private val filterX = OneEuroFilter(minCutoff = 0.2, beta = 0.015)
     private val filterY = OneEuroFilter(minCutoff = 0.2, beta = 0.015)
 
@@ -110,6 +116,8 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         settings = GazeSettings.load(this)
         getSharedPreferences(GazeSettings.PREFS_NAME, Context.MODE_PRIVATE)
             .registerOnSharedPreferenceChangeListener(settingsListener)
+        CalibrationStore.prefs(this)
+            .registerOnSharedPreferenceChangeListener(profileListener)
 
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val bounds = wm.currentWindowMetrics.bounds
@@ -144,12 +152,13 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         }
     }
 
-    /** 建立並啟動追蹤引擎；同時（重新）載入校正模型。校正後恢復也走這裡。 */
+    /** 建立並啟動追蹤引擎；同時（重新）載入目前情境的校正模型。校正後恢復也走這裡。 */
     private fun startEngine() {
         if (pausedForCalibration) return
-        model = GazeModel.load(this)
+        val activeId = CalibrationStore.getActiveProfileId(this)
+        model = CalibrationStore.loadModel(this, activeId)
         if (model == null) {
-            Log.w(TAG, "尚未校正，游標無法運作——請先在 App 內完成校正")
+            Log.w(TAG, "情境「${CalibrationStore.profileName(activeId)}」尚未校正，游標無法運作——請先在 App 內完成該情境的校正")
         }
         filterX.reset()
         filterY.reset()
@@ -504,6 +513,8 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         runCatching {
             getSharedPreferences(GazeSettings.PREFS_NAME, Context.MODE_PRIVATE)
                 .unregisterOnSharedPreferenceChangeListener(settingsListener)
+            CalibrationStore.prefs(this)
+                .unregisterOnSharedPreferenceChangeListener(profileListener)
         }
         engine?.stop()
         engine = null
