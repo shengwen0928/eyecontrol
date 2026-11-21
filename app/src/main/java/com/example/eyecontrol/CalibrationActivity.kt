@@ -72,11 +72,16 @@ class CalibrationActivity : AppCompatActivity() {
         }
     }
 
-    /** 3×3 網格，邊緣留 8% 邊距。 */
+    /**
+     * 9×9 均勻網格（邊緣留 8%），依 3×3 分區分組：每區 9 個點；
+     * 順序中間區先，再上面、下面、左邊、右邊、左上、左下、右上、右下。
+     */
     private fun buildPoints(w: Float, h: Float): List<Pair<Float, Float>> {
-        val xs = listOf(0.08f, 0.5f, 0.92f).map { it * w }
-        val ys = listOf(0.08f, 0.5f, 0.92f).map { it * h }
-        return ys.flatMap { y -> xs.map { x -> x to y } }
+        val xs = (0..8).map { (0.08f + it * 0.105f) * w }
+        val ys = (0..8).map { (0.08f + it * 0.105f) * h }
+        val grid = ys.flatMap { y -> xs.map { x -> x to y } }
+        val byZone = grid.groupBy { ZonedGazeModel.zoneIdFor(it, w.toInt(), h.toInt()) }
+        return ZonedGazeModel.ZONE_ORDER.flatMap { byZone[it].orEmpty() }
     }
 
     private fun startPoint(index: Int) {
@@ -84,7 +89,13 @@ class CalibrationActivity : AppCompatActivity() {
         pointBuffer.clear()
         settleUntil = SystemClock.elapsedRealtime() + SETTLE_MS
         val (x, y) = points[index]
-        view.showTarget(x, y, 0f, "${index + 1} / ${points.size}")
+        view.showTarget(x, y, 0f, pointLabel())
+    }
+
+    /** 進度標籤：目前分區第幾點／9，總第幾點／81。 */
+    private fun pointLabel(): String {
+        val zone = ZonedGazeModel.zoneIdFor(points[pointIndex], view.width, view.height)
+        return "${ZonedGazeModel.zoneName(zone)} ${pointIndex % 9 + 1}/9 · ${pointIndex + 1}/${points.size}"
     }
 
     private fun onSample(sample: GazeSample?) {
@@ -99,8 +110,7 @@ class CalibrationActivity : AppCompatActivity() {
         val target = points[pointIndex]
         pointBuffer.add(sample.features)
         view.showTarget(target.first, target.second,
-            pointBuffer.size / SAMPLES_PER_POINT.toFloat(),
-            "${pointIndex + 1} / ${points.size}")
+            pointBuffer.size / SAMPLES_PER_POINT.toFloat(), pointLabel())
 
         if (pointBuffer.size >= SAMPLES_PER_POINT) {
             commitPoint(target)
@@ -134,13 +144,13 @@ class CalibrationActivity : AppCompatActivity() {
         finished = true
         val screenW = view.width
         val screenH = view.height
-        val model = GazeModel.train(
+        val zoned = ZonedGazeModel.train(
             allFeatures, allTargets,
             screenW = screenW.toDouble(), screenH = screenH.toDouble(),
         )
 
-        // 訓練集誤差偏樂觀，只列出來參考；精度等級以留一法交叉驗證為準
-        val report = GazeEvaluator.evaluate(model, allFeatures, allTargets, screenW, screenH)
+        // 訓練集誤差偏樂觀，只列出來參考；精度等級以留一法交叉驗證為準（皆以全域模型評估）
+        val report = GazeEvaluator.evaluate(zoned.global, allFeatures, allTargets, screenW, screenH)
         val cvErr = GazeEvaluator.leaveOnePointOut(allFeatures, allTargets, screenW, screenH)
         val avgErr = report.inSampleMeanErrorPx.toInt()
         val gradeErr = if (cvErr.isNaN()) avgErr else cvErr.toInt()
@@ -151,14 +161,15 @@ class CalibrationActivity : AppCompatActivity() {
             else -> "偏差 ⚠️ (建議放穩手機重新校正)"
         }
         val worst = report.worstPoint
+        val worstZone = ZonedGazeModel.zoneName(ZonedGazeModel.zoneIdFor(worst.target, screenW, screenH))
         val cvText = if (cvErr.isNaN()) "—" else "${cvErr.toInt()} px"
 
-        CalibrationStore.saveModel(this, profileId, model, cvErr.takeIf { !it.isNaN() })
+        CalibrationStore.saveModel(this, profileId, zoned, cvErr.takeIf { !it.isNaN() })
         Toast.makeText(
             this,
             "「${CalibrationStore.profileName(profileId)}」校正完成！\n精度等級：$rating\n訓練集平均誤差：$avgErr px\n" +
                 "留一法交叉驗證誤差：$cvText\n" +
-                "最差：第 ${worst.pointIndex + 1} 點（${worst.meanErrorPx.toInt()} px）",
+                "最差：第 ${worst.pointIndex + 1} 點（$worstZone 區，${worst.meanErrorPx.toInt()} px）",
             Toast.LENGTH_LONG,
         ).show()
         finish()

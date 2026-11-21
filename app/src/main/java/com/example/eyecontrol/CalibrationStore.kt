@@ -52,10 +52,10 @@ object CalibrationStore {
         prefs(context).edit().putString(KEY_ACTIVE_PROFILE, id).apply()
     }
 
-    fun loadModel(context: Context, id: String): GazeModel? {
+    fun loadModel(context: Context, id: String): ZonedGazeModel? {
         migrateIfNeeded(context)
         val raw = prefs(context).getString(KEY_MODEL_PREFIX + id, null) ?: return null
-        return GazeModel.fromJsonString(raw)
+        return ZonedGazeModel.fromJsonString(raw)
     }
 
     fun exists(context: Context, id: String): Boolean = loadModel(context, id) != null
@@ -76,7 +76,7 @@ object CalibrationStore {
         }.getOrNull()
     }
 
-    fun saveModel(context: Context, id: String, model: GazeModel, looErrorPx: Double?) {
+    fun saveModel(context: Context, id: String, model: ZonedGazeModel, looErrorPx: Double?) {
         val meta = JSONObject().apply {
             put("calibratedAt", System.currentTimeMillis())
             if (looErrorPx != null && !looErrorPx.isNaN()) {
@@ -100,8 +100,10 @@ object CalibrationStore {
         if (p.getBoolean(KEY_MIGRATED, false)) return
         val legacy = GazeModel.load(context)
         if (legacy != null && p.getString(KEY_MODEL_PREFIX + PROFILE_SITTING, null) == null) {
+            // 舊版單一模型包成只有全域模型的分區模型，之後該情境重校才會補上各區模型
+            val zoned = ZonedGazeModel(legacy, emptyMap())
             p.edit()
-                .putString(KEY_MODEL_PREFIX + PROFILE_SITTING, legacy.toJsonString())
+                .putString(KEY_MODEL_PREFIX + PROFILE_SITTING, zoned.toJsonString())
                 .putString(
                     KEY_META_PREFIX + PROFILE_SITTING,
                     JSONObject().apply {

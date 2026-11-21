@@ -46,7 +46,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
     override val lifecycle: Lifecycle get() = lifecycleRegistry
 
     private var engine: FaceTrackerEngine? = null
-    private var model: GazeModel? = null
+    private var model: ZonedGazeModel? = null
     private var cursorView: CursorOverlayView? = null
     private var controlView: ControlPanelView? = null
 
