@@ -1,7 +1,12 @@
 package com.example.eyecontrol
 
 import android.Manifest
+import android.app.AlertDialog
+import android.app.DownloadManager
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.provider.Settings
@@ -14,6 +19,28 @@ import com.example.eyecontrol.databinding.ActivityMainBinding
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
+
+    private var pendingDownloadId: Long = -1L
+    private var installPendingAfterSettings = false
+
+    private val downloadReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
+            if (id != pendingDownloadId) return
+            pendingDownloadId = -1L
+            val apkFile = UpdateChecker.downloadedApkFile(this@MainActivity)
+            if (!apkFile.exists()) {
+                Toast.makeText(this@MainActivity, "下載失敗，請再試一次", Toast.LENGTH_SHORT).show()
+                return
+            }
+            // 尚未允許安裝未知來源應用程式時，installApk 會先開系統設定；
+            // 允許後回到 App，onResume 會再跳一次安裝畫面
+            if (!packageManager.canRequestPackageInstalls()) {
+                installPendingAfterSettings = true
+            }
+            UpdateChecker.installApk(this@MainActivity, apkFile)
+        }
+    }
 
     private val requestCamera =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -63,11 +90,49 @@ class MainActivity : AppCompatActivity() {
             CalibrationStore.setActiveProfileId(this, selectedProfileId())
             refreshStatus()
         }
+
+        ContextCompat.registerReceiver(
+            this, downloadReceiver,
+            IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        // 只有全新啟動時檢查更新（旋轉螢幕重建時不重複跳提示）
+        if (savedInstanceState == null) checkForUpdate()
     }
 
     override fun onResume() {
         super.onResume()
         refreshStatus()
+        // 從「允許安裝未知來源應用程式」設定頁回來，且下載好的 APK 還在：再跳一次安裝畫面
+        if (installPendingAfterSettings) {
+            installPendingAfterSettings = false
+            val apkFile = UpdateChecker.downloadedApkFile(this)
+            if (apkFile.exists() && packageManager.canRequestPackageInstalls()) {
+                UpdateChecker.installApk(this, apkFile)
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        runCatching { unregisterReceiver(downloadReceiver) }
+    }
+
+    private fun checkForUpdate() {
+        UpdateChecker.checkForUpdate(this) { info ->
+            AlertDialog.Builder(this)
+                .setTitle("有新版本 ${info.versionTag}")
+                .setMessage(
+                    "目前版本 ${BuildConfig.VERSION_NAME}，最新版本 ${info.versionTag}。" +
+                        "要下載更新嗎？下載完會直接跳安裝畫面。",
+                )
+                .setPositiveButton("下載更新") { _, _ ->
+                    pendingDownloadId = UpdateChecker.startDownload(this, info)
+                    Toast.makeText(this, "開始下載更新…", Toast.LENGTH_SHORT).show()
+                }
+                .setNegativeButton("稍後再說", null)
+                .show()
+        }
     }
 
     private fun hasCameraPermission() =
