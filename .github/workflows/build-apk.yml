@@ -20,11 +20,13 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
+      # 不用 android-actions/setup-android：它會跑 sdkmanager tools，而
+      # tools 套件已從軟體庫移除，步驟會直接失敗。改用 runner 預裝的 SDK。
       - name: Install SDK packages
         run: |
+          SDK_ROOT="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
+          SDK_BIN="$(echo "$SDK_ROOT"/cmdline-tools/*/bin | cut -d' ' -f1)"
+          export PATH="$SDK_BIN:$PATH"
           yes | sdkmanager --licenses
           sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
