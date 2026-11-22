@@ -39,18 +39,43 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.13"
-          
-      - name: Build debug APK
+
+      # Play 版 release 鑰匙：只在需要 bundlePlayRelease 時解出，絕不印出、不進 repo。
+      - name: Restore release keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.EYE_RELEASE_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            echo "EYE_RELEASE_KEYSTORE_FILE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build sideload APK and Play AAB
+        env:
+          EYE_RELEASE_STORE_PASSWORD: ${{ secrets.EYE_RELEASE_STORE_PASSWORD }}
+          EYE_RELEASE_KEY_PASSWORD: ${{ secrets.EYE_RELEASE_KEY_PASSWORD }}
+          EYE_RELEASE_KEY_ALIAS: ${{ secrets.EYE_RELEASE_KEY_ALIAS }}
         run: |
           rm -f local.properties
-          gradle assembleDebug --stacktrace
+          gradle assembleSideloadDebug bundlePlayRelease --stacktrace
 
+      - name: Show Play AAB signing certificate
+        run: |
+          AAB=app/build/outputs/bundle/playRelease/app-play-release.aab
+          keytool -printcert -jarfile "$AAB" || echo "no JAR signature block; AAB uses APK Signature Scheme only"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: eyecontrol-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: eyecontrol-sideload-debug-apk
+          path: app/build/outputs/apk/sideload/debug/app-sideload-debug.apk
           if-no-files-found: error
           retention-days: 30
 
+      - name: Upload AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: eyecontrol-play-release-aab
+          path: app/build/outputs/bundle/playRelease/app-play-release.aab
+          if-no-files-found: error
+          retention-days: 30
