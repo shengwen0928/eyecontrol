@@ -26,8 +26,8 @@ android {
         applicationId = "tw.com.zhu.eyecontrol"   // Play 上架識別碼（namespace 維持原程式碼包名即可）
         minSdk = 26
         targetSdk = 36
-        versionCode = 11
-        versionName = "0.5.7"
+        versionCode = 13
+        versionName = "0.5.9"
     }
 
     // 發行通路：sideload（GitHub release 直裝，App 內自己查 GitHub 更新）與

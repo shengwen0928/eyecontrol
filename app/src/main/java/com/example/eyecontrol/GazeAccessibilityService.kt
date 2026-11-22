@@ -64,7 +64,23 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
     private val settingsListener =
         SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
             settings = GazeSettings.load(this)
+            applyVerifyCaptureFlags()
         }
+
+    /**
+     * 遠端上傳是否生效：開關開著，且目前是側載版（Play 商店版無網路權限，
+     * BuildConfig.REMOTE_MONITOR_ENABLED 為 false，上傳不可能發生）。
+     */
+    private fun remoteUploadEnabled(): Boolean =
+        settings.remoteMonitor && BuildConfig.REMOTE_MONITOR_ENABLED
+
+    /** 把目前的診斷／監控開關同步給追蹤引擎的驗證影格（引擎重建與設定變更時呼叫）。 */
+    private fun applyVerifyCaptureFlags() {
+        engine?.setVerifyCapture(
+            local = settings.diagnosticLogging,
+            upload = remoteUploadEnabled(),
+        )
+    }
 
     /** 情境或情境模型變更時即時換模型，服務運作中切換情境也會生效。 */
     private val profileListener =
@@ -122,6 +138,9 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
     private var dwellStart = 0L
     private var cooldownUntil = 0L
 
+    /** 螢幕點擊的自適應停留狀態機（錨點跟漂、進度衰減、低速幀才累積）。 */
+    private val screenDwell = DwellTracker()
+
     // 眨眼檢測狀態
     private var isBlinking = false
     private var blinkStartTime = 0L
@@ -143,6 +162,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
     private var smoothedRoll = Double.NaN
     private var smoothedIod = Double.NaN
     private var smoothedLux = Float.NaN
+    private var smoothedGlassesHint = Double.NaN
     private var conditionSeeded = false
     private var lastConditionCheckAt = 0L
     private var reminderCooldownUntil = 0L
@@ -241,6 +261,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         reloadConditionState()
         engine = FaceTrackerEngine(this) { sample -> onSample(sample) }
         engine?.start(this)
+        applyVerifyCaptureFlags()
     }
 
     private fun addCursorOverlay(wm: WindowManager) {
@@ -323,16 +344,20 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             hoverBtnIndex = -1
             hoverStart = 0L
             controlView?.setHover(-1, 0f)
+            // 螢幕停留進度也清掉：臉遺失期間的進度不得在恢復後沿用。
+            screenDwell.reset()
             // 診斷紀錄也要記臉遺失幀：邊緣看不到臉時，游標不動可能是追蹤丟失而非模型問題。
             // 偏移記目前實際套用的值（與主路徑同一算法），免得摘要的平均偏移被 0 拉偏。
+            // 亮度記目前平滑值（臉遺失與光線有關時，摘要看得到）；影像度量無樣本，記空欄。
             GazeLog.record(
                 this, settings.diagnosticLogging || settings.remoteMonitor,
-                remoteUpload = settings.remoteMonitor,
+                remoteUpload = remoteUploadEnabled(),
                 face = false, features = null,
                 rawX = null, rawY = null, gainedX = null, gainedY = null,
                 curX = null, curY = null, sensitivity = settings.sensitivity,
                 offsetX = if (settings.conditionCorrection) appliedOffsetX else 0f,
                 offsetY = if (settings.conditionCorrection) appliedOffsetY else 0f,
+                lux = smoothedLux.takeIf { it.isFinite() && it >= 0f },
             )
             // 提醒顯示中也要推進狀態機（逾時／移開邏輯），否則臉遺失期間提醒永遠不消失
             if (reminderActive) {
@@ -355,6 +380,8 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
                 // 記錄閉眼前最後一個有效的游標位置
                 lastValidX = lastCursorX
                 lastValidY = lastCursorY
+                // 閉眼期間的停留進度作廢，睜眼後重新累積。
+                screenDwell.reset()
             }
             // 閉眼期間凍結游標、暫停 dwell 累積，且不進行後續預測
             return
@@ -369,6 +396,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
                     cooldownUntil = now + settings.cooldownMs
                     dwellStart = now
                     currentProgress = 0f
+                    screenDwell.reset()
                     return
                 }
             }
@@ -376,6 +404,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
 
         // 單眼閉合（或雙眼閉合後的釋放幀不穩定），凍結游標不處理
         if (leftClosed || rightClosed) {
+            screenDwell.reset()
             return
         }
 
@@ -418,6 +447,39 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             lastFaceTurn = faceTurn
             Log.d(TAG, "臉轉向：$faceTurn")
         }
+
+        // 眼部影像降級幀（過暗、過平、鏡片反光）：預測不可信，游標凍在上一位置、
+        // 不驅動停留累積、不碰濾波狀態；提醒顯示中則以「不在目標上」推進提醒狀態機。
+        // 度量未知（NaN）不等於降級，照常處理。
+        if (EyeImageMetrics.isDegraded(sample)) {
+            GazeLog.record(
+                this, settings.diagnosticLogging || settings.remoteMonitor,
+                remoteUpload = remoteUploadEnabled(),
+                face = true, features = sample.features,
+                rawX = rawX, rawY = rawY, gainedX = gainedX, gainedY = gainedY,
+                curX = lastCursorX.takeIf { hasValidCursor },
+                curY = lastCursorY.takeIf { hasValidCursor },
+                sensitivity = settings.sensitivity,
+                offsetX = effOffsetX, offsetY = effOffsetY,
+                lux = sample.ambientLux.takeIf { it.isFinite() && it >= 0f },
+                imageQuality = sample.eyeContrast.takeIf { it.isFinite() },
+                glassesHint = sample.specularRatio.takeIf { it.isFinite() },
+            )
+            screenDwell.reset()
+            currentProgress = 0f
+            if (reminderActive) {
+                cursor.setCursor(
+                    if (hasValidCursor) Triple(lastCursorX, lastCursorY, 0f) else null
+                )
+                updateReminder(null, null, null, null, now)
+                return
+            }
+            cursor.setCursor(
+                if (hasValidCursor) Triple(lastCursorX, lastCursorY, 0f) else null
+            )
+            return
+        }
+
         val t = sample.timestampMs / 1000.0
         val x = filterX.filter(gainedX, t).toFloat().coerceIn(0f, screenW - 1f)
         val y = filterY.filter(gainedY, t).toFloat().coerceIn(0f, screenH - 1f)
@@ -431,11 +493,14 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         // 濾波後三段座標，才能分清是哪一段把移動吃掉或推偏。
         GazeLog.record(
             this, settings.diagnosticLogging || settings.remoteMonitor,
-            remoteUpload = settings.remoteMonitor,
+            remoteUpload = remoteUploadEnabled(),
             face = true, features = sample.features,
             rawX = rawX, rawY = rawY, gainedX = gainedX, gainedY = gainedY,
             curX = x, curY = y, sensitivity = settings.sensitivity,
             offsetX = effOffsetX, offsetY = effOffsetY,
+            lux = sample.ambientLux.takeIf { it.isFinite() && it >= 0f },
+            imageQuality = sample.eyeContrast.takeIf { it.isFinite() },
+            glassesHint = sample.specularRatio.takeIf { it.isFinite() },
         )
 
         // 條件變化評估（約每 0.5 秒一次）：變化大時查歷史內插，沒遇過才跳提醒
@@ -507,6 +572,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             }
             // 在把手上時，不累積螢幕點擊的 dwell 進度
             anchorX = x; anchorY = y; dwellStart = now
+            screenDwell.reset()
         } else if (!panelJustCollapsed && inPanel) {
             val relativeY = y - panelTop
             val btnHeight = panelHeight / 5f
@@ -560,6 +626,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             }
             // 在面板上時，不累積螢幕點擊的 dwell 進度
             anchorX = x; anchorY = y; dwellStart = now
+            screenDwell.reset()
         } else {
             // 不在面板／把手上，清除面板與把手的 hover 狀態
             if (hoverBtnIndex != -1) {
@@ -580,24 +647,63 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
 
             // 如果目前是暫停狀態，游標不累積點擊，且不顯示游標（或者顯示半透明灰色）
             if (currentMode == ActionMode.PAUSED) {
+                screenDwell.reset()
                 cursor.setCursor(null)
                 return
             }
 
-            // 處理螢幕點擊與滑動的 dwell 邏輯
-            if (hypot(x - anchorX, y - anchorY) > settings.dwellRadiusPx) {
-                anchorX = x; anchorY = y; dwellStart = now
-            } else if (now >= cooldownUntil) {
-                progress = min((now - dwellStart) / settings.dwellTimeMs.toFloat(), 1f)
+            // 螢幕點擊的自適應停留（DwellTracker）：錨點跟著緩漂、短暫離開只衰減、
+            // 低速幀才累積。冷卻期間不累積、狀態重置，避免冷卻一過立即重觸。
+            if (now < cooldownUntil) {
+                screenDwell.reset()
+            } else {
+                progress = screenDwell.update(
+                    x, y, now, settings.dwellTimeMs, settings.dwellRadiusPx,
+                )
+                // 錨點同步回服務欄位：點擊落點與游標顯示的「鎖定」效果沿用舊變數。
+                anchorX = screenDwell.anchorX
+                anchorY = screenDwell.anchorY
                 if (progress >= 1f) {
                     if (isAtEdge) {
-                        performEdgeAction(isAtLeft, isAtRight, isAtTop, isAtBottom)
+                        // 邊緣手勢門檻：模型外推時游標會被箝在邊緣（實測壞時段
+                        // 5–6 成時間卡在邊緣），只看濾波後位置會讓「看旁邊」誤觸
+                        // 返回／首頁。必須同時滿足：原始預測在螢幕範圍附近（放寬
+                        // 15% 邊界容忍模型小偏差，拒絕數千像素的外推值），且穩定
+                        // 錨點確實落在邊緣區。任一不符就吞掉這次觸發（給冷卻、
+                        // 不動作），絕不拿被箝制的邊緣位置當注視。
+                        val rawMarginX = screenW * EDGE_RAW_MARGIN_FRACTION
+                        val rawMarginY = screenH * EDGE_RAW_MARGIN_FRACTION
+                        val rawInScreen = rawX >= -rawMarginX && rawX <= screenW + rawMarginX &&
+                            rawY >= -rawMarginY && rawY <= screenH + rawMarginY
+                        val anchorAtEdge = anchorX < edgeSize || anchorX > screenW - edgeSize ||
+                            anchorY < edgeSize || anchorY > screenH - edgeSize
+                        if (rawInScreen && anchorAtEdge) {
+                            performEdgeAction(isAtLeft, isAtRight, isAtTop, isAtBottom)
+                            // 驗證影格：邊緣手勢觸發時的實際眼區狀態（下一幀有臉時取）。
+                            engine?.requestVerifyCapture(
+                                VerifyFrames.CAPTURE_EDGE_FIRE, progress
+                            )
+                        } else {
+                            Log.d(
+                                TAG,
+                                "邊緣手勢被擋下：原始預測超出螢幕或錨點不在邊緣，視為不可信注視",
+                            )
+                            // 驗證影格：被擋下的觸發也要留證據，才分得出誤擋還是真擋。
+                            engine?.requestVerifyCapture(
+                                VerifyFrames.CAPTURE_EDGE_DENIED, progress
+                            )
+                        }
                     } else {
                         triggerActionAt(anchorX, anchorY)
+                        // 驗證影格：停留點擊觸發時的實際眼區狀態（下一幀有臉時取）。
+                        engine?.requestVerifyCapture(
+                            VerifyFrames.CAPTURE_DWELL_FIRE, progress
+                        )
                     }
                     cooldownUntil = now + settings.cooldownMs
                     dwellStart = now
                     progress = 0f
+                    screenDwell.reset()
                 }
             }
         }
@@ -628,6 +734,8 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         smoothedRoll = Double.NaN
         smoothedIod = Double.NaN
         smoothedLux = Float.NaN
+        smoothedGlassesHint = Double.NaN
+        screenDwell.reset()
         conditionSeeded = false
         lastConditionCheckAt = 0L
         reminderCooldownUntil = 0L
@@ -649,6 +757,9 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             smoothedLux = if (smoothedLux.isNaN()) sample.ambientLux
             else smoothedLux + (sample.ambientLux - smoothedLux) * CONDITION_SMOOTH_ALPHA.toFloat()
         }
+        if (sample.specularRatio.isFinite() && sample.specularRatio >= 0.0) {
+            smoothedGlassesHint = smoothDouble(smoothedGlassesHint, sample.specularRatio)
+        }
     }
 
     private fun smoothDouble(prev: Double, current: Double): Double =
@@ -660,6 +771,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             pitch = smoothedPitch,
             roll = smoothedRoll,
             iod = smoothedIod,
+            glassesHint = smoothedGlassesHint,
         )
 
     /** 條件變化評估：變化大時先查歷史內插，沒遇過的條件才跳提醒。 */
@@ -714,6 +826,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         anchorY = screenH / 2f
         dwellStart = now
         currentProgress = 0f
+        screenDwell.reset()
         cursorView?.showReminderTarget(
             screenW / 2f, screenH / 2f, "注視 1 秒，自動校正游標偏移",
         )
@@ -733,6 +846,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         // 重置 dwell 起點：避免提醒收掉後，沿用提醒顯示時的 dwellStart 立即誤觸
         dwellStart = SystemClock.elapsedRealtime()
         currentProgress = 0f
+        screenDwell.reset()
         if (markSkipped) {
             ConditionHistory.saveReference(
                 this, CalibrationStore.getActiveProfileId(this), currentCondition(),
@@ -822,6 +936,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         anchorY = ty
         dwellStart = now
         currentProgress = 0f
+        screenDwell.reset()
         cooldownUntil = now + settings.cooldownMs
         Log.d(TAG, "單點快速校正完成：偏移=($ox, $oy)，條件=$cond")
         mainHandler.post {
@@ -1153,6 +1268,9 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         // 展開後閒置 4 秒且視線不在面板上也收回（暫停模式除外）。
         private const val PANEL_COLLAPSE_AFTER_SELECT_MS = 1200L
         private const val PANEL_AUTO_COLLAPSE_MS = 4000L
+        // 邊緣手勢的原始預測容忍邊界：原始預測超出螢幕此比例以外，視為外推失準、
+        // 不得觸發邊緣手勢（見螢幕停留觸發處的門檻說明）。
+        private const val EDGE_RAW_MARGIN_FRACTION = 0.15
         // 行為參數（停留時間、冷卻、眨眼、平滑）統一由 GazeSettings 提供，此處不再寫死。
     }
 }

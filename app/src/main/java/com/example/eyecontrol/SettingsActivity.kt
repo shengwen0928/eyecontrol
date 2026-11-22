@@ -70,6 +70,7 @@ class SettingsActivity : AppCompatActivity() {
         binding.switchGyro.isChecked = s.gyroCompensation
         binding.switchDistance.isChecked = s.distanceCompensation
         binding.switchCondition.isChecked = s.conditionCorrection
+        binding.switchIris.isChecked = s.irisRefinement
         binding.switchDiag.isChecked = s.diagnosticLogging
         binding.switchRemote.isChecked = s.remoteMonitor
         // Play 商店版無網路權限，遠端監控無法上傳，整列隱藏。
@@ -80,6 +81,7 @@ class SettingsActivity : AppCompatActivity() {
         binding.rowCondition.setOnClickListener { binding.switchCondition.toggle() }
         binding.rowDistance.setOnClickListener { binding.switchDistance.toggle() }
         binding.rowGyro.setOnClickListener { binding.switchGyro.toggle() }
+        binding.rowIris.setOnClickListener { binding.switchIris.toggle() }
         binding.rowDiag.setOnClickListener { binding.switchDiag.toggle() }
         binding.rowRemote.setOnClickListener { binding.switchRemote.toggle() }
         binding.rowDiagSummary.setOnClickListener { showDiagSummary() }
@@ -257,6 +259,7 @@ class SettingsActivity : AppCompatActivity() {
             conditionCorrection = binding.switchCondition.isChecked,
             diagnosticLogging = binding.switchDiag.isChecked,
             remoteMonitor = binding.switchRemote.isChecked,
+            irisRefinement = binding.switchIris.isChecked,
         ).clamped()
         s.save(this)
         Toast.makeText(this, "設定已儲存", Toast.LENGTH_SHORT).show()
@@ -277,6 +280,7 @@ class SettingsActivity : AppCompatActivity() {
         binding.switchGyro.isChecked = d.gyroCompensation
         binding.switchDistance.isChecked = d.distanceCompensation
         binding.switchCondition.isChecked = d.conditionCorrection
+        binding.switchIris.isChecked = d.irisRefinement
         binding.switchDiag.isChecked = d.diagnosticLogging
         binding.switchRemote.isChecked = d.remoteMonitor
         Toast.makeText(this, "已恢復預設值（按儲存才生效）", Toast.LENGTH_SHORT).show()
@@ -289,7 +293,7 @@ class SettingsActivity : AppCompatActivity() {
     private fun showDiagSummary() {
         val summary = GazeLog.summarize(this)
         val body = summary
-            ?: "尚無診斷紀錄。\n\n打開「診斷紀錄」開關並按儲存，正常使用手機 1–2 分鐘（看看四個角落與中間），再回來看摘要。"
+            ?: "尚無診斷紀錄。\n\n診斷紀錄預設開啟；正常使用手機 1–2 分鐘（看看四個角落與中間），再回來看摘要。"
         val textView = TextView(this).apply {
             text = body
             setTextIsSelectable(true)

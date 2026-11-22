@@ -10,7 +10,7 @@ import kotlin.math.abs
  * 矯正歷史紀錄：條件感知漂移修正的記憶。
  *
  * 每次單點快速校正都會記下一筆：當時的條件向量（亮度桶、裝置
- * pitch/roll、臉距 iod）＋量到的游標偏移 (ox, oy)。之後條件變化時，先查歷史：
+ * pitch/roll、臉距 iod、眼區反光指標）＋量到的游標偏移 (ox, oy)。之後條件變化時，先查歷史：
  * 以前遇過相近條件，就以反距離加權內插出偏移直接套用、不跳提醒；覆蓋的條件
  * 越多，提醒越少、越準。完整重校會清空該情境的歷史（舊偏移配新模型沒有意義）。
  *
@@ -47,6 +47,14 @@ object ConditionHistory {
     /** 套用偏移的單軸上限（像素）：超過就不是漂移、該重校了。 */
     const val MAX_OFFSET_PX = 250f
 
+    /**
+     * 眼鏡／反光指標變化量：校正時記錄的眼區反光比例（specularRatio）與目前值
+     * 相差超過此值，就視為「眼鏡狀態可能變了」（戴上／拿下眼鏡、反光型態大變）。
+     * 這只是啟發式代理指標，不是可靠的眼鏡偵測——只用來觸發既有的
+     * 「顯著變化 → 提醒快速校正／歷史內插」流程，不得據此宣稱偵測到眼鏡。
+     */
+    const val GLASSES_HINT_CHANGE = 0.25
+
     /** 亮度桶：-1 = 未知（無感測器／尚無資料），0 暗、1 偏暗、2 明亮、3 日光。 */
     fun luxBucket(lux: Float): Int {
         if (!lux.isFinite() || lux < 0f) return -1
@@ -58,18 +66,22 @@ object ConditionHistory {
         }
     }
 
-    /** 一次矯正當下的條件。pitch/roll 為弧度（NaN = 當時無感測器資料）；iod 為特徵 6（NaN = 未知）。 */
+    /** 一次矯正當下的條件。pitch/roll 為弧度（NaN = 當時無感測器資料）；iod 為特徵 6（NaN = 未知）。
+     * glassesHint 為眼區反光比例（NaN = 當時無影像度量）；只做變化觸發用，不是眼鏡偵測。
+     * 新增欄位一律放最後並給預設值，舊存檔讀不到時以 NaN 表示未知、不參與判定。 */
     data class Condition(
         val luxBucket: Int,
         val pitch: Double,
         val roll: Double,
         val iod: Double,
+        val glassesHint: Double = Double.NaN,
     ) {
         fun toJson(): JSONObject = JSONObject().apply {
             put("luxBucket", luxBucket)
             putDoubleOrNull("pitch", pitch)
             putDoubleOrNull("roll", roll)
             putDoubleOrNull("iod", iod)
+            putDoubleOrNull("glassesHint", glassesHint)
         }
 
         companion object {
@@ -79,6 +91,7 @@ object ConditionHistory {
                     pitch = json.getDoubleOrNaN("pitch"),
                     roll = json.getDoubleOrNaN("roll"),
                     iod = json.getDoubleOrNaN("iod"),
+                    glassesHint = json.getDoubleOrNaN("glassesHint"),
                 )
             }.getOrNull()
         }
@@ -128,6 +141,9 @@ object ConditionHistory {
         if (reference.iod > 0.0 && current.iod > 0.0 &&
             abs(current.iod - reference.iod) / reference.iod >= IOD_CHANGE_RATIO
         ) return true
+        if (reference.glassesHint.isFinite() && current.glassesHint.isFinite() &&
+            abs(current.glassesHint - reference.glassesHint) >= GLASSES_HINT_CHANGE
+        ) return true
         return false
     }
 
@@ -148,6 +164,9 @@ object ConditionHistory {
         if (a.iod > 0.0 && b.iod > 0.0) {
             val mean = (a.iod + b.iod) / 2.0
             d += abs(a.iod - b.iod) / (IOD_CHANGE_RATIO * mean)
+        }
+        if (a.glassesHint.isFinite() && b.glassesHint.isFinite()) {
+            d += abs(a.glassesHint - b.glassesHint) / GLASSES_HINT_CHANGE
         }
         return d
     }

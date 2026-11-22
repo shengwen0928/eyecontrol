@@ -697,6 +697,47 @@
                     android:background="@color/ec_stone" />
 
                 <LinearLayout
+                    android:id="@+id/rowIris"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="虹膜影像精修（實驗）"
+                            android:textSize="@dimen/ec_text_body" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="用眼部影像微調虹膜位置，預設關閉；開啟後需重新校正才生效。"
+                            android:textColor="@color/ec_text_secondary"
+                            android:textSize="@dimen/ec_text_small" />
+                    </LinearLayout>
+
+                    <Switch
+                        android:id="@+id/switchIris"
+                        android:layout_width="wrap_content"
+                        android:layout_height="48dp"
+                        android:contentDescription="虹膜影像精修" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/ec_stone" />
+
+                <LinearLayout
                     android:id="@+id/rowDiag"
                     android:layout_width="match_parent"
                     android:layout_height="56dp"
@@ -714,13 +755,13 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="診斷紀錄（暫時除錯用）"
+                            android:text="診斷紀錄（內部調校用）"
                             android:textSize="@dimen/ec_text_body" />
 
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="只記游標數字、不含影像、不上傳；最多記 2 分鐘自動停止。"
+                            android:text="預設開啟：記游標數字與眼區驗證裁切（本機）；上架前整段移除。"
                             android:textColor="@color/ec_text_secondary"
                             android:textSize="@dimen/ec_text_small" />
                     </LinearLayout>
@@ -790,13 +831,13 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="遠端監控（暫時除錯用）"
+                            android:text="遠端監控（內部調校用）"
                             android:textSize="@dimen/ec_text_body" />
 
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="開啟後自動記錄並上傳游標數字給開發者監看，不必自己看紀錄；調適完會移除此功能。"
+                            android:text="預設開啟：上傳診斷數字與眼區裁切給開發者監看；上架前整段移除。"
                             android:textColor="@color/ec_text_secondary"
                             android:textSize="@dimen/ec_text_small" />
                     </LinearLayout>

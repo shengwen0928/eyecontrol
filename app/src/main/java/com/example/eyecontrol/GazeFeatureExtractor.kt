@@ -1,5 +1,7 @@
 package com.example.eyecontrol
 
+import android.graphics.PointF
+import android.graphics.RectF
 import com.google.mediapipe.tasks.components.containers.NormalizedLandmark
 import kotlin.math.hypot
 
@@ -9,6 +11,9 @@ import kotlin.math.hypot
  * leftOpen / rightOpen：眼睛睜開程度（眼高/眼寬），用來偵測眨眼、閉眼時凍結游標。
  * devicePitch / deviceRoll：同一時刻的裝置姿勢（弧度，旋轉向量）；NaN = 當時沒有感測器資料。
  * ambientLux：同一時刻的環境光（lux，光感測器）；NaN = 當時沒有感測器資料。
+ * eyeMeanLum / eyeContrast / specularRatio：同一時刻的眼部影像度量（裝置端即時量測的數字，
+ * 不含影像）；NaN = 當時沒有影像度量（例如幀槽已被新幀覆寫）。只做信心判斷與診斷記錄，
+ * 不進 22 維特徵（特徵契約不變）。
  * 預測時只用「與校正時的變化量」，不拿絕對角度當特徵（見 GazeModel）。
  */
 data class GazeSample(
@@ -19,6 +24,17 @@ data class GazeSample(
     val devicePitch: Double = Double.NaN,
     val deviceRoll: Double = Double.NaN,
     val ambientLux: Float = Float.NaN,
+    val eyeMeanLum: Double = Double.NaN,
+    val eyeContrast: Double = Double.NaN,
+    val specularRatio: Double = Double.NaN,
+)
+
+/** 虹膜影像精修結果（正規化座標）：landmark 位置與影像質心混合後的位置。 */
+data class RefinedIris(
+    val leftX: Double,
+    val leftY: Double,
+    val rightX: Double,
+    val rightY: Double,
 )
 
 /** 臉轉向：以特徵 7（pitchRot）、8（yawRot）相對校正基準的「符號」判定方向。 */
@@ -50,7 +66,11 @@ object GazeFeatureExtractor {
     /** 特徵維度（含偏置項），校正與推論兩端共用。 */
     const val DIM = 22
 
-    fun extract(lm: List<NormalizedLandmark>, timestampMs: Long): GazeSample? {
+    fun extract(
+        lm: List<NormalizedLandmark>,
+        timestampMs: Long,
+        refinedIris: RefinedIris? = null,
+    ): GazeSample? {
         if (lm.size <= R_IRIS) return null
 
         fun x(i: Int) = lm[i].x().toDouble()
@@ -73,10 +93,10 @@ object GazeFeatureExtractor {
         val iod = hypot(rCx - lCx, rCy - lCy)
         if (iod < 1e-6) return null
 
-        val lIrisX = (x(L_IRIS) - lCx) / lW
-        val lIrisY = (y(L_IRIS) - lCy) / lW
-        val rIrisX = (x(R_IRIS) - rCx) / rW
-        val rIrisY = (y(R_IRIS) - rCy) / rW
+        val lIrisX = ((refinedIris?.leftX ?: x(L_IRIS)) - lCx) / lW
+        val lIrisY = ((refinedIris?.leftY ?: y(L_IRIS)) - lCy) / lW
+        val rIrisX = ((refinedIris?.rightX ?: x(R_IRIS)) - rCx) / rW
+        val rIrisY = ((refinedIris?.rightY ?: y(R_IRIS)) - rCy) / rW
 
         // 頭部姿態代理（以 iod 正規化，對距離不敏感）：
         //   pitch（抬頭/低頭）：鼻尖相對兩眼中線的「垂直」偏移——頭抬起來時鼻尖靠近眼睛
@@ -131,6 +151,45 @@ object GazeFeatureExtractor {
         )
 
         return GazeSample(features, leftOpen, rightOpen, timestampMs)
+    }
+
+    /**
+     * 雙眼幾何資訊（正規化座標）：眼眶外框（四個眼角點圍出的矩形）與虹膜中心，
+     * 供眼部影像度量（EyeImageMetrics）換算像素座標用。landmark 不足時回 null。
+     * 注意：精修後的虹膜位置不在這裡產生——影像度量在引擎端以此幾何資訊量測後，
+     * 才把精修位置以 [RefinedIris] 傳回 [extract]。
+     */
+    fun eyeGeometry(
+        lm: List<NormalizedLandmark>,
+    ): Pair<EyeImageMetrics.EyeGeometry, EyeImageMetrics.EyeGeometry>? {
+        if (lm.size <= R_IRIS) return null
+        fun x(i: Int) = lm[i].x()
+        fun y(i: Int) = lm[i].y()
+        fun eyeRect(corners: IntArray): RectF {
+            var minX = Float.MAX_VALUE
+            var maxX = -Float.MAX_VALUE
+            var minY = Float.MAX_VALUE
+            var maxY = -Float.MAX_VALUE
+            for (i in corners) {
+                minX = minOf(minX, x(i))
+                maxX = maxOf(maxX, x(i))
+                minY = minOf(minY, y(i))
+                maxY = maxOf(maxY, y(i))
+            }
+            return RectF(minX, minY, maxX, maxY)
+        }
+        val left = EyeImageMetrics.EyeGeometry(
+            rectNorm = eyeRect(intArrayOf(L_EYE_OUTER, L_EYE_INNER, L_EYE_TOP, L_EYE_BOTTOM)),
+            irisNorm = PointF(x(L_IRIS), y(L_IRIS)),
+        )
+        val right = EyeImageMetrics.EyeGeometry(
+            rectNorm = eyeRect(intArrayOf(R_EYE_INNER, R_EYE_OUTER, R_EYE_TOP, R_EYE_BOTTOM)),
+            irisNorm = PointF(x(R_IRIS), y(R_IRIS)),
+        )
+        if (left.rectNorm.width() <= 0f || left.rectNorm.height() <= 0f ||
+            right.rectNorm.width() <= 0f || right.rectNorm.height() <= 0f
+        ) return null
+        return left to right
     }
 
     /**

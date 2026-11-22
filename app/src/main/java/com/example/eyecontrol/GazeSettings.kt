@@ -40,17 +40,25 @@ data class GazeSettings(
      */
     val conditionCorrection: Boolean = true,
     /**
-     * 診斷紀錄（暫時除錯用）：開啟後在本機記錄游標數據（數字 only，不含影像、
-     * 不上傳），供分析游標不動／偏移的原因。預設關閉；記錄最多 120 秒自動停止。
+     * 診斷紀錄（內部調校用，正式上架前整段移除）：開啟後在本機記錄游標數據
+     * （數字）與眼區驗證裁切（見 VerifyFrames），供分析游標不動／偏移的原因。
+     * 預設開啟（調校期間）；關掉後停止本機擷取。每 120 秒自動關檔上傳並開新一段連續紀錄。
      */
-    val diagnosticLogging: Boolean = false,
+    val diagnosticLogging: Boolean = true,
     /**
-     * 遠端監控（暫時除錯用，調適完移除）：開啟後自動記錄游標數據並上傳到開發者
-     * 的監控端點（只含游標數字與臉部特徵數值，不含影像），供開發者直接監看分析，
-     * 使用者不必自己看紀錄。預設關閉；與診斷紀錄共用同一份本機檔案與 120 秒上限。
-     * Play 商店版無網路權限，此開關不顯示（見 BuildConfig.REMOTE_MONITOR_ENABLED）。
+     * 遠端監控（內部調校用，正式上架前整段移除）：開啟後自動記錄游標數據與
+     * 眼區驗證裁切並上傳到開發者的監控端點，供開發者直接監看分析，使用者
+     * 不必自己看紀錄。預設開啟（調校期間）；關掉後停止上傳。
+     * Play 商店版無網路權限，此開關不顯示且上傳不可能發生
+     * （見 BuildConfig.REMOTE_MONITOR_ENABLED）。
      */
-    val remoteMonitor: Boolean = false,
+    val remoteMonitor: Boolean = true,
+    /**
+     * 虹膜影像精修（實驗功能）：用眼部影像的暗像素質心微調 landmark 虹膜位置，
+     * 再餵給特徵計算。預設關閉；開啟後特徵分布改變，必須重新校正才生效
+     * （舊模型配新特徵會失準）。影像只在裝置端即時量測，不儲存、不上傳。
+     */
+    val irisRefinement: Boolean = false,
 ) {
 
     fun clamped(): GazeSettings {
@@ -93,6 +101,7 @@ data class GazeSettings(
             putBoolean(KEY_CONDITION_CORRECTION, conditionCorrection)
             putBoolean(KEY_DIAGNOSTIC_LOGGING, diagnosticLogging)
             putBoolean(KEY_REMOTE_MONITOR, remoteMonitor)
+            putBoolean(KEY_IRIS_REFINEMENT, irisRefinement)
         }.apply()
     }
 
@@ -144,6 +153,7 @@ data class GazeSettings(
         private const val KEY_CONDITION_CORRECTION = "condition_correction"
         private const val KEY_DIAGNOSTIC_LOGGING = "diagnostic_logging"
         private const val KEY_REMOTE_MONITOR = "remote_monitor"
+        private const val KEY_IRIS_REFINEMENT = "iris_refinement"
 
         fun load(context: Context): GazeSettings {
             // 存檔損毀（型別不符等）時直接回預設值，不要讓例外沿 prefs 監聽炸開服務
@@ -168,8 +178,12 @@ data class GazeSettings(
                     gyroCompensation = p.getBoolean(KEY_GYRO_COMPENSATION, false),
                     distanceCompensation = p.getBoolean(KEY_DISTANCE_COMPENSATION, true),
                     conditionCorrection = p.getBoolean(KEY_CONDITION_CORRECTION, true),
-                    diagnosticLogging = p.getBoolean(KEY_DIAGNOSTIC_LOGGING, false),
-                    remoteMonitor = p.getBoolean(KEY_REMOTE_MONITOR, false),
+                    // 調校期預設開啟：getBoolean 的預設值只在「從未存過該 key」
+                    // 時生效；使用者先前明確關掉（存過 false）升級後仍是關，
+                    // 不會被新預設值強制重開。
+                    diagnosticLogging = p.getBoolean(KEY_DIAGNOSTIC_LOGGING, true),
+                    remoteMonitor = p.getBoolean(KEY_REMOTE_MONITOR, true),
+                    irisRefinement = p.getBoolean(KEY_IRIS_REFINEMENT, false),
                 ).clamped()
             } catch (e: Exception) {
                 GazeSettings()

@@ -53,6 +53,7 @@ class CalibrationActivity : AppCompatActivity() {
 
     /** 本次校正期間收到的環境光（有效幀），用來算校正時的亮度基準。 */
     private val calibrationLuxSamples = mutableListOf<Float>()
+    private val calibrationGlassesSamples = mutableListOf<Double>()
 
     /** 睜眼閾值：與服務共用 GazeSettings 的同一設定來源。 */
     private var blinkThreshold = GazeSettings.DEFAULT_BLINK_THRESHOLD
@@ -174,6 +175,8 @@ class CalibrationActivity : AppCompatActivity() {
         view.setFaceLost(false)
         // 環境光是條件，與睜眼與否無關：有效幀都收，作為本次校正的亮度基準
         sample.ambientLux.takeIf { it.isFinite() && it >= 0f }?.let { calibrationLuxSamples.add(it) }
+        // 眼區反光指標同為條件：有效幀都收，作為本次校正的眼鏡／反光基準
+        sample.specularRatio.takeIf { it.isFinite() && it >= 0.0 }?.let { calibrationGlassesSamples.add(it) }
         // 眨眼/閉眼期間的樣本會污染訓練資料，丟棄
         if (sample.leftOpen < blinkThreshold || sample.rightOpen < blinkThreshold) return
 
@@ -269,6 +272,8 @@ class CalibrationActivity : AppCompatActivity() {
             .average().takeIf { allFeatures.isNotEmpty() } ?: Double.NaN
         val calibrationLux = calibrationLuxSamples
             .average().takeIf { calibrationLuxSamples.isNotEmpty() }?.toFloat() ?: Float.NaN
+        val calibrationGlasses = calibrationGlassesSamples
+            .average().takeIf { calibrationGlassesSamples.isNotEmpty() } ?: Double.NaN
         ConditionHistory.clearHistory(this, profileId)
         ConditionHistory.saveReference(
             this, profileId,
@@ -277,6 +282,7 @@ class CalibrationActivity : AppCompatActivity() {
                 pitch = deviceBasePitch ?: Double.NaN,
                 roll = deviceBaseRoll ?: Double.NaN,
                 iod = calibrationIod,
+                glassesHint = calibrationGlasses,
             ),
         )
         Toast.makeText(
