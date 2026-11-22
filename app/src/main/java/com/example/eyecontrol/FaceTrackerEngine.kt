@@ -3,6 +3,8 @@ package com.example.eyecontrol
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Matrix
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.util.Size
 import androidx.camera.core.CameraSelector
@@ -18,8 +20,10 @@ import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarker
 import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarkerResult
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * 前鏡頭 → MediaPipe Face Landmarker → GazeSample 的串流引擎。
@@ -212,11 +216,11 @@ class FaceTrackerEngine(
         closed = true
         orientationTracker.stop()
         lightSensorTracker.stop()
-        cameraProvider?.unbindAll()
+        unbindOnMainThread()
         cameraProvider = null
         analysisExecutor?.let {
             it.shutdown()
-            runCatching { it.awaitTermination(500, java.util.concurrent.TimeUnit.MILLISECONDS) }
+            runCatching { it.awaitTermination(500, TimeUnit.MILLISECONDS) }
         }
         analysisExecutor = null
         landmarker?.close()
@@ -231,6 +235,31 @@ class FaceTrackerEngine(
             cachedRotatedBmps[i]?.recycle()
             cachedRotatedBmps[i] = null
         }
+    }
+
+    /**
+     * 解綁相機用例。ProcessCameraProvider.unbindAll() 只能在主執行緒呼叫，
+     * 但 stop() 也會從背景執行緒被呼叫（服務交接校正時，見
+     * GazeAccessibilityService.requestPauseForCalibration）——在主執行緒
+     * 之外直接呼叫會拋 IllegalStateException，導致按下校正就閃退。
+     * 因此非主執行緒時把 unbind 排到主執行緒並等它完成（最多 2 秒，逾時放行，
+     * 避免主執行緒被卡住時背景執行緒無限等待）；主執行緒不會等這支背景執行緒，
+     * 故不會死結。
+     */
+    private fun unbindOnMainThread() {
+        val provider = cameraProvider ?: return
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            runCatching { provider.unbindAll() }
+            return
+        }
+        val latch = CountDownLatch(1)
+        Handler(Looper.getMainLooper()).post {
+            runCatching { provider.unbindAll() }
+            latch.countDown()
+        }
+        // await 可能被中斷：中斷時也要繼續往下釋放執行緒與模型，否則交接
+        // 永遠等不到 onReleased、校正頁會卡住。
+        runCatching { latch.await(2, TimeUnit.SECONDS) }
     }
 
     companion object {
