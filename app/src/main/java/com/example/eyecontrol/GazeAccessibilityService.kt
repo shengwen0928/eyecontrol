@@ -104,6 +104,12 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
     private var lastPanelHoverAt = 0L
 
     /**
+     * 把手是否已武裝：收起後視線必須先離開把手區一次，下次注視才會展開。
+     * 避免選完模式、視線還停在原地時立刻又把面板展開。
+     */
+    private var handleArmed = false
+
+    /**
      * 面板按鈕是否已武裝：選完一個模式後，視線必須先離開面板區一次，
      * 下次注視同一鍵才會重新累積。否則選了「暫停」後視線還停在原地，
      * 滿一個 dwell 就會立刻「重啟」，暫停黏不住。
