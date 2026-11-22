@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Dashboard（眼控中心）：狀態卡＋眼控操作＋追蹤品質＋設定摘要。 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fillViewport="true">
@@ -10,90 +12,772 @@
         android:orientation="vertical"
         android:padding="24dp">
 
-        <TextView
-            android:layout_width="wrap_content"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/app_name"
-            android:textSize="28sp"
-            android:textStyle="bold"
-            android:layout_marginBottom="8dp" />
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="眼控中心"
+                android:textSize="@dimen/ec_text_title"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/scenarioChip"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/chip_bg"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="7dp"
+                android:text="情境：坐著"
+                android:textColor="@color/ec_sage_deep"
+                android:textSize="@dimen/ec_text_small"
+                android:textStyle="bold" />
+        </LinearLayout>
 
         <TextView
             android:id="@+id/statusText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="狀態：初始化中…"
-            android:textSize="15sp"
-            android:layout_marginBottom="24dp" />
+            android:layout_marginTop="4dp"
+            android:text="狀態載入中…"
+            android:textColor="@color/ec_text_secondary"
+            android:textSize="@dimen/ec_text_small" />
+
+        <!-- 系統狀態 -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            app:cardBackgroundColor="@color/ec_card_white"
+            app:cardCornerRadius="@dimen/ec_card_radius"
+            app:cardElevation="0dp"
+            app:strokeColor="@color/ec_stone"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="系統狀態"
+                    android:textColor="@color/ec_text_secondary"
+                    android:textSize="@dimen/ec_text_small"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingVertical="8dp">
+
+                    <View
+                        android:id="@+id/dotCamera"
+                        android:layout_width="8dp"
+                        android:layout_height="8dp"
+                        android:background="@drawable/dot_circle" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="10dp"
+                        android:text="相機"
+                        android:textSize="@dimen/ec_text_body" />
+
+                    <TextView
+                        android:id="@+id/valCamera"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="—"
+                        android:textColor="@color/ec_text_secondary"
+                        android:textSize="@dimen/ec_text_small" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/ec_stone" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingVertical="8dp">
+
+                    <View
+                        android:id="@+id/dotFace"
+                        android:layout_width="8dp"
+                        android:layout_height="8dp"
+                        android:background="@drawable/dot_circle" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="10dp"
+                        android:text="臉部辨識"
+                        android:textSize="@dimen/ec_text_body" />
+
+                    <TextView
+                        android:id="@+id/valFace"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="—"
+                        android:textColor="@color/ec_text_secondary"
+                        android:textSize="@dimen/ec_text_small" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/ec_stone" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingVertical="8dp">
+
+                    <View
+                        android:id="@+id/dotTracking"
+                        android:layout_width="8dp"
+                        android:layout_height="8dp"
+                        android:background="@drawable/dot_circle" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="10dp"
+                        android:text="眼球追蹤"
+                        android:textSize="@dimen/ec_text_body" />
+
+                    <TextView
+                        android:id="@+id/valTracking"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="—"
+                        android:textColor="@color/ec_text_secondary"
+                        android:textSize="@dimen/ec_text_small" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/ec_stone" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingVertical="8dp">
+
+                    <View
+                        android:id="@+id/dotCalibration"
+                        android:layout_width="8dp"
+                        android:layout_height="8dp"
+                        android:background="@drawable/dot_circle" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="10dp"
+                        android:text="校正"
+                        android:textSize="@dimen/ec_text_body" />
+
+                    <TextView
+                        android:id="@+id/valCalibration"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="—"
+                        android:textColor="@color/ec_text_secondary"
+                        android:textSize="@dimen/ec_text_small" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/ec_stone" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingVertical="8dp">
+
+                    <View
+                        android:id="@+id/dotService"
+                        android:layout_width="8dp"
+                        android:layout_height="8dp"
+                        android:background="@drawable/dot_circle" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="10dp"
+                        android:text="無障礙服務"
+                        android:textSize="@dimen/ec_text_body" />
+
+                    <TextView
+                        android:id="@+id/valService"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="—"
+                        android:textColor="@color/ec_text_secondary"
+                        android:textSize="@dimen/ec_text_small" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="8dp"
+                    android:background="@color/ec_stone" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="使用情境（每個情境各做一次 9 點校正）"
+                    android:textSize="@dimen/ec_text_small" />
+
+                <RadioGroup
+                    android:id="@+id/profileGroup"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:orientation="horizontal">
+
+                    <RadioButton
+                        android:id="@+id/radioSitting"
+                        android:layout_width="wrap_content"
+                        android:layout_height="48dp"
+                        android:buttonTint="@color/ec_sage_deep"
+                        android:text="坐著" />
+
+                    <RadioButton
+                        android:id="@+id/radioLying"
+                        android:layout_width="wrap_content"
+                        android:layout_height="48dp"
+                        android:layout_marginStart="16dp"
+                        android:buttonTint="@color/ec_sage_deep"
+                        android:text="躺著" />
+
+                    <RadioButton
+                        android:id="@+id/radioFlat"
+                        android:layout_width="wrap_content"
+                        android:layout_height="48dp"
+                        android:layout_marginStart="16dp"
+                        android:buttonTint="@color/ec_sage_deep"
+                        android:text="平放" />
+                </RadioGroup>
+
+                <TextView
+                    android:id="@+id/profileStatusText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/ec_text_secondary"
+                    android:textSize="@dimen/ec_text_small" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnCamera"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:contentDescription="授予相機權限"
+                    android:text="授予相機權限"
+                    android:visibility="gone" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnAccessibility"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:contentDescription="開啟無障礙服務設定"
+                    android:text="開啟無障礙服務"
+                    android:visibility="gone" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- 眼控操作 -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            app:cardBackgroundColor="@color/ec_card_white"
+            app:cardCornerRadius="@dimen/ec_card_radius"
+            app:cardElevation="0dp"
+            app:strokeColor="@color/ec_stone"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="眼控操作"
+                    android:textColor="@color/ec_text_secondary"
+                    android:textSize="@dimen/ec_text_small"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnStartTracking"
+                        style="@style/Widget.Material3.Button"
+                        android:layout_width="0dp"
+                        android:layout_height="@dimen/ec_button_height"
+                        android:layout_weight="1"
+                        android:contentDescription="開始眼控"
+                        android:text="開始眼控"
+                        app:backgroundTint="@color/ec_sage_deep"
+                        app:cornerRadius="@dimen/ec_card_radius" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnPauseTracking"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:layout_width="0dp"
+                        android:layout_height="@dimen/ec_button_height"
+                        android:layout_weight="1"
+                        android:layout_marginStart="10dp"
+                        android:contentDescription="暫停眼控"
+                        android:text="暫停眼控"
+                        app:cornerRadius="@dimen/ec_card_radius" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnCalibrate"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:layout_width="0dp"
+                        android:layout_height="@dimen/ec_button_height"
+                        android:layout_weight="1"
+                        android:contentDescription="重新校正，開始 9 點眼球校正"
+                        android:text="重新校正"
+                        app:cornerRadius="@dimen/ec_card_radius" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnStopTracking"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:layout_width="0dp"
+                        android:layout_height="@dimen/ec_button_height"
+                        android:layout_weight="1"
+                        android:layout_marginStart="10dp"
+                        android:contentDescription="停止追蹤，關閉相機與游標"
+                        android:text="停止追蹤"
+                        android:textColor="@color/ec_error"
+                        app:cornerRadius="@dimen/ec_card_radius" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="暫停後游標隱藏，可從右側模式面板的「重啟」或這裡恢復；停止會關閉相機，直到再按「開始眼控」。"
+                    android:textColor="@color/ec_text_secondary"
+                    android:textSize="@dimen/ec_text_small" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnTraining"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/ec_button_height"
+                    android:layout_marginTop="12dp"
+                    android:contentDescription="操作練習，循序練習眼控操作"
+                    android:text="操作練習"
+                    app:cornerRadius="@dimen/ec_card_radius" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- 追蹤品質 -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            app:cardBackgroundColor="@color/ec_card_white"
+            app:cardCornerRadius="@dimen/ec_card_radius"
+            app:cardElevation="0dp"
+            app:strokeColor="@color/ec_stone"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="追蹤品質"
+                    android:textColor="@color/ec_text_secondary"
+                    android:textSize="@dimen/ec_text_small"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingVertical="8dp">
+
+                    <View
+                        android:id="@+id/dotEyes"
+                        android:layout_width="8dp"
+                        android:layout_height="8dp"
+                        android:background="@drawable/dot_circle" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="10dp"
+                        android:text="雙眼偵測"
+                        android:textSize="@dimen/ec_text_body" />
+
+                    <TextView
+                        android:id="@+id/valEyes"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="—"
+                        android:textColor="@color/ec_text_secondary"
+                        android:textSize="@dimen/ec_text_small" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/ec_stone" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingVertical="8dp">
+
+                    <View
+                        android:id="@+id/dotQuality"
+                        android:layout_width="8dp"
+                        android:layout_height="8dp"
+                        android:background="@drawable/dot_circle" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="10dp"
+                        android:text="追蹤狀態"
+                        android:textSize="@dimen/ec_text_body" />
+
+                    <TextView
+                        android:id="@+id/valQuality"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="—"
+                        android:textColor="@color/ec_text_secondary"
+                        android:textSize="@dimen/ec_text_small" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/ec_stone" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingVertical="8dp">
+
+                    <View
+                        android:id="@+id/dotClickable"
+                        android:layout_width="8dp"
+                        android:layout_height="8dp"
+                        android:background="@drawable/dot_circle" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="10dp"
+                        android:text="可以點擊"
+                        android:textSize="@dimen/ec_text_body" />
+
+                    <TextView
+                        android:id="@+id/valClickable"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="—"
+                        android:textColor="@color/ec_text_secondary"
+                        android:textSize="@dimen/ec_text_small" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/ec_stone" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingVertical="8dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="校正品質"
+                        android:textSize="@dimen/ec_text_body" />
+
+                    <TextView
+                        android:id="@+id/valLooError"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="—"
+                        android:textColor="@color/ec_text_secondary"
+                        android:textSize="@dimen/ec_text_small" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="游標預覽示意（非即時畫面）"
+                    android:textColor="@color/ec_text_muted"
+                    android:textSize="@dimen/ec_text_small" />
+
+                <RelativeLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="132dp"
+                    android:layout_marginTop="8dp"
+                    android:background="@drawable/preview_box">
+
+                    <View
+                        android:id="@+id/previewBar1"
+                        android:layout_width="120dp"
+                        android:layout_height="30dp"
+                        android:layout_alignParentStart="true"
+                        android:layout_alignParentTop="true"
+                        android:layout_marginStart="16dp"
+                        android:layout_marginTop="16dp"
+                        android:background="@drawable/preview_bar" />
+
+                    <View
+                        android:layout_width="150dp"
+                        android:layout_height="30dp"
+                        android:layout_alignParentStart="true"
+                        android:layout_below="@id/previewBar1"
+                        android:layout_marginStart="16dp"
+                        android:layout_marginTop="12dp"
+                        android:background="@drawable/preview_bar" />
+
+                    <View
+                        android:layout_width="44dp"
+                        android:layout_height="44dp"
+                        android:layout_alignParentEnd="true"
+                        android:layout_centerVertical="true"
+                        android:layout_marginEnd="52dp"
+                        android:background="@drawable/preview_ring" />
+
+                    <View
+                        android:layout_width="16dp"
+                        android:layout_height="16dp"
+                        android:layout_alignParentEnd="true"
+                        android:layout_centerVertical="true"
+                        android:layout_marginEnd="66dp"
+                        android:background="@drawable/dot_circle"
+                        android:backgroundTint="@color/ec_sage_deep" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_alignParentBottom="true"
+                        android:layout_alignParentStart="true"
+                        android:layout_marginStart="16dp"
+                        android:layout_marginBottom="12dp"
+                        android:text="游標預覽示意 · 靜態示意，非即時畫面"
+                        android:textColor="@color/ec_sage_deep"
+                        android:textSize="@dimen/ec_text_caption" />
+                </RelativeLayout>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="找不到臉部時，凝視點擊不會觸發；把臉移回畫面中央就會恢復。"
+                    android:textColor="@color/ec_text_secondary"
+                    android:textSize="@dimen/ec_text_small" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- 操作設定摘要 -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            app:cardBackgroundColor="@color/ec_card_white"
+            app:cardCornerRadius="@dimen/ec_card_radius"
+            app:cardElevation="0dp"
+            app:strokeColor="@color/ec_stone"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="操作設定摘要"
+                    android:textColor="@color/ec_text_secondary"
+                    android:textSize="@dimen/ec_text_small"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingVertical="8dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="凝視時間"
+                        android:textSize="@dimen/ec_text_body" />
+
+                    <TextView
+                        android:id="@+id/valDwellSummary"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="—"
+                        android:textColor="@color/ec_text_secondary"
+                        android:textSize="@dimen/ec_text_small" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/ec_stone" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingVertical="8dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="角度／亮度變化提醒校正"
+                        android:textSize="@dimen/ec_text_body" />
+
+                    <TextView
+                        android:id="@+id/valConditionSummary"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="—"
+                        android:textColor="@color/ec_text_secondary"
+                        android:textSize="@dimen/ec_text_small" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/ec_stone" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingVertical="8dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="臉部遠近修正"
+                        android:textSize="@dimen/ec_text_body" />
+
+                    <TextView
+                        android:id="@+id/valDistanceSummary"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="—"
+                        android:textColor="@color/ec_text_secondary"
+                        android:textSize="@dimen/ec_text_small" />
+                </LinearLayout>
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnSettings"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:contentDescription="調整設定"
+                    android:text="調整設定" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
 
         <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="使用情境（每個情境各做一次 9 點校正）"
-            android:textSize="15sp"
-            android:layout_marginBottom="4dp" />
-
-        <RadioGroup
-            android:id="@+id/profileGroup"
+            android:id="@+id/footerText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:layout_marginBottom="24dp">
-
-            <RadioButton
-                android:id="@+id/radioSitting"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="坐著" />
-
-            <RadioButton
-                android:id="@+id/radioLying"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="16dp"
-                android:text="躺著" />
-
-            <RadioButton
-                android:id="@+id/radioFlat"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="16dp"
-                android:text="平放" />
-        </RadioGroup>
-
-        <Button
-            android:id="@+id/btnCamera"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="1. 授予相機權限" />
-
-        <Button
-            android:id="@+id/btnCalibrate"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="2. 開始眼球校正（9 點）" />
-
-        <Button
-            android:id="@+id/btnAccessibility"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="3. 開啟無障礙服務（啟動眼控）" />
-
-        <Button
-            android:id="@+id/btnSettings"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="4. 參數設定（停留時間、眨眼、平滑）" />
+            android:layout_marginTop="16dp"
+            android:gravity="center"
+            android:text="版本載入中…"
+            android:textColor="@color/ec_text_muted"
+            android:textSize="@dimen/ec_text_caption" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:textSize="13sp"
-            android:text="使用說明：\n• 先選使用情境（坐著／躺著／平放），每個情境各做一次 9 點校正。\n• 先完成校正，再開啟無障礙服務。\n• 校正時請固定頭部，只用眼睛看畫面上的點。\n• 眼控啟動後，視線移動藍色游標，凝視同一處達到設定的停留時間即點擊（預設 1 秒，可在「參數設定」調整）。\n• 到「設定 → 協助工具 → 已安裝的服務」可關閉眼控。" />
-
+            android:layout_marginTop="4dp"
+            android:gravity="center"
+            android:text="影像只在本機即時處理，不儲存、不上傳。App 啟動時會連線查詢新版本，除此之外不連網。"
+            android:textColor="@color/ec_text_muted"
+            android:textSize="@dimen/ec_text_caption" />
     </LinearLayout>
 </ScrollView>

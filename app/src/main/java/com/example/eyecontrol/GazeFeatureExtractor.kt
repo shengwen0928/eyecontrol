@@ -8,6 +8,7 @@ import kotlin.math.hypot
  * features：餵給回歸模型的特徵向量（虹膜相對眼眶位置 + 頭部位置/距離 + 偏置項）。
  * leftOpen / rightOpen：眼睛睜開程度（眼高/眼寬），用來偵測眨眼、閉眼時凍結游標。
  * devicePitch / deviceRoll：同一時刻的裝置姿勢（弧度，旋轉向量）；NaN = 當時沒有感測器資料。
+ * ambientLux：同一時刻的環境光（lux，光感測器）；NaN = 當時沒有感測器資料。
  * 預測時只用「與校正時的變化量」，不拿絕對角度當特徵（見 GazeModel）。
  */
 data class GazeSample(
@@ -17,6 +18,7 @@ data class GazeSample(
     val timestampMs: Long,
     val devicePitch: Double = Double.NaN,
     val deviceRoll: Double = Double.NaN,
+    val ambientLux: Float = Float.NaN,
 )
 
 /** 臉轉向：以特徵 7（pitchRot）、8（yawRot）相對校正基準的「符號」判定方向。 */

@@ -51,6 +51,9 @@ class CalibrationActivity : AppCompatActivity() {
     /** 與 pointBuffer 一一對應的裝置角度，剔除離群值時跟著同一批樣本走。 */
     private val pointDeviceAngles = mutableListOf<Pair<Double, Double>>()
 
+    /** 本次校正期間收到的環境光（有效幀），用來算校正時的亮度基準。 */
+    private val calibrationLuxSamples = mutableListOf<Float>()
+
     /** 睜眼閾值：與服務共用 GazeSettings 的同一設定來源。 */
     private var blinkThreshold = GazeSettings.DEFAULT_BLINK_THRESHOLD
 
@@ -79,6 +82,7 @@ class CalibrationActivity : AppCompatActivity() {
 
         view.post {
             points = buildPoints(view.width.toFloat(), view.height.toFloat())
+            view.setPoints(points)
             startPoint(0)
             // 先請無障礙服務放開相機，確認釋放後才綁定自己的——避免兩邊搶相機導致畫面串流被拔掉
             GazeAccessibilityService.requestPauseForCalibration {
@@ -125,6 +129,7 @@ class CalibrationActivity : AppCompatActivity() {
 
     private fun startPoint(index: Int) {
         pointIndex = index
+        view.setCompleted(index)
         pointBuffer.clear()
         pointDeviceAngles.clear()
         settleUntil = SystemClock.elapsedRealtime() + SETTLE_MS
@@ -154,6 +159,8 @@ class CalibrationActivity : AppCompatActivity() {
         lastValidSampleAt = now
         faceLostHintShown = false
         view.setFaceLost(false)
+        // 環境光是條件，與睜眼與否無關：有效幀都收，作為本次校正的亮度基準
+        sample.ambientLux.takeIf { it.isFinite() && it >= 0f }?.let { calibrationLuxSamples.add(it) }
         // 眨眼/閉眼期間的樣本會污染訓練資料，丟棄
         if (sample.leftOpen < blinkThreshold || sample.rightOpen < blinkThreshold) return
 
@@ -229,6 +236,24 @@ class CalibrationActivity : AppCompatActivity() {
         val cvText = if (cvErr.isNaN()) "—" else "${cvErr.toInt()} px"
 
         CalibrationStore.saveModel(this, profileId, model, cvErr.takeIf { !it.isNaN() })
+
+        // 完整重校：該情境的條件歷史作廢（舊偏移配新模型沒有意義），
+        // 並以本次校正時的條件為新基準，避免服務一恢復就跳提醒。
+        val calibrationIod = allFeatures
+            .mapNotNull { it.getOrNull(6)?.takeIf { v -> v.isFinite() && v > 0.0 } }
+            .average().takeIf { allFeatures.isNotEmpty() } ?: Double.NaN
+        val calibrationLux = calibrationLuxSamples
+            .average().takeIf { calibrationLuxSamples.isNotEmpty() }?.toFloat() ?: Float.NaN
+        ConditionHistory.clearHistory(this, profileId)
+        ConditionHistory.saveReference(
+            this, profileId,
+            ConditionHistory.Condition(
+                luxBucket = ConditionHistory.luxBucket(calibrationLux),
+                pitch = deviceBasePitch ?: Double.NaN,
+                roll = deviceBaseRoll ?: Double.NaN,
+                iod = calibrationIod,
+            ),
+        )
         Toast.makeText(
             this,
             "「${CalibrationStore.profileName(profileId)}」校正完成！\n精度等級：$rating\n訓練集平均誤差：$avgErr px\n" +
@@ -247,7 +272,7 @@ class CalibrationActivity : AppCompatActivity() {
         GazeAccessibilityService.resumeAfterCalibration()
     }
 
-    /** 畫校正目標點：帶脈衝動畫的外圈進度環 + 呼吸內圈實心點。 */
+    /** 畫校正目標點：帶脈衝動畫的外圈進度環 + 呼吸內圈實心點。設計系統淺色系。 */
     private class CalibrationView(context: Context) : View(context) {
         private var tx = -1f
         private var ty = -1f
@@ -255,25 +280,48 @@ class CalibrationActivity : AppCompatActivity() {
         private var label = ""
         private var faceLost = false
 
-        private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(79, 195, 247) }
+        /** 全部目標點位置（用來畫已完成的點）與已完成點數：只影響繪製，不參與採樣。 */
+        private var allPoints: List<Pair<Float, Float>> = emptyList()
+        private var completedCount = 0
+
+        // 尺寸一律以 dp/sp 換算（density / scaledDensity），不寫死 px。
+        private val density = context.resources.displayMetrics.density
+        private val scaledDensity = context.resources.displayMetrics.scaledDensity
+        private fun dp(v: Float) = v * density
+
+        private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(82, 111, 92) }
         private val pulsePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(60, 79, 195, 247)
+            color = Color.argb(120, 231, 238, 232)
             style = Paint.Style.FILL
         }
         private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE; style = Paint.Style.STROKE; strokeWidth = 8f
+            color = Color.rgb(82, 111, 92); style = Paint.Style.STROKE; strokeWidth = dp(3f)
         }
         private val bgRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(40, 255, 255, 255); style = Paint.Style.STROKE; strokeWidth = 8f
+            color = Color.rgb(238, 237, 232); style = Paint.Style.STROKE; strokeWidth = dp(3f)
         }
+        private val donePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(82, 111, 92) }
         private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.rgb(200, 200, 200); textSize = 44f; textAlign = Paint.Align.CENTER
+            color = Color.rgb(32, 37, 34); textSize = 20f * scaledDensity; textAlign = Paint.Align.CENTER
         }
         private val hintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.rgb(120, 120, 120); textSize = 36f; textAlign = Paint.Align.CENTER
+            color = Color.rgb(116, 122, 117); textSize = 15f * scaledDensity; textAlign = Paint.Align.CENTER
         }
         private val warnPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.rgb(255, 150, 120); textSize = 40f; textAlign = Paint.Align.CENTER
+            color = Color.rgb(193, 138, 72)
+            textSize = 17f * scaledDensity
+            textAlign = Paint.Align.CENTER
+            isFakeBoldText = true
+        }
+
+        fun setPoints(pts: List<Pair<Float, Float>>) {
+            allPoints = pts
+            invalidate()
+        }
+
+        fun setCompleted(count: Int) {
+            completedCount = count
+            invalidate()
         }
 
         fun showTarget(x: Float, y: Float, p: Float, text: String) {
@@ -288,31 +336,37 @@ class CalibrationActivity : AppCompatActivity() {
         }
 
         override fun onDraw(canvas: Canvas) {
-            canvas.drawColor(Color.rgb(18, 18, 24)) // 護眼深藍黑色背景
+            canvas.drawColor(Color.rgb(247, 246, 242)) // Warm Ivory 背景
+            // 已完成的點：填實小圓點，讓進度留在畫面上
+            for (i in 0 until completedCount) {
+                val p = allPoints.getOrNull(i) ?: continue
+                canvas.drawCircle(p.first, p.second, dp(8f), donePaint)
+            }
             if (tx < 0) return
 
             // 畫提示文字與進度文字
-            canvas.drawText(label, width / 2f, height / 2f + 100f, textPaint)
-            canvas.drawText("請保持頭部不動，用眼睛注視動態藍點", width / 2f, height / 2f + 160f, hintPaint)
+            canvas.drawText(label, width / 2f, height / 2f + dp(40f), textPaint)
+            canvas.drawText("請保持頭部不動，用眼睛注視圓點", width / 2f, height / 2f + dp(64f), hintPaint)
             if (faceLost) {
-                canvas.drawText("找不到臉，請把臉移回畫面中央", width / 2f, height / 2f + 220f, warnPaint)
+                canvas.drawText("找不到臉，請把臉移回畫面中央", width / 2f, height / 2f + dp(88f), warnPaint)
             }
 
             val time = System.currentTimeMillis()
-            
+
             // 呼吸脈衝動畫：內圈點大小會隨時間縮放
             val pulseScale = 1.0f + 0.18f * kotlin.math.sin(time / 160.0).toFloat()
-            val baseRadius = 20f
-            
+            val baseRadius = dp(14f)
+
             // 畫外圈淡脈衝光暈
             val pulseRadius = baseRadius * (pulseScale + 0.3f)
             canvas.drawCircle(tx, ty, pulseRadius, pulsePaint)
-            
+
             // 畫實心目標點
             canvas.drawCircle(tx, ty, baseRadius * pulseScale, dotPaint)
 
-            // 畫進度軌道（淡灰色背景環）
-            val r = 40f
+            // 畫進度軌道（淺色背景環）
+            // 進度環直徑 60dp（≥56dp 有效注視區）
+            val r = dp(30f)
             canvas.drawCircle(tx, ty, r, bgRingPaint)
 
             // 進度環：收滿樣本時剛好畫滿一圈

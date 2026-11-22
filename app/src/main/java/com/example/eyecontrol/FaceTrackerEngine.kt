@@ -42,6 +42,9 @@ class FaceTrackerEngine(
     /** 裝置姿勢追蹤：每幀樣本附上當下裝置角度，供預測時做相對校正姿勢的修正。 */
     private val orientationTracker = DeviceOrientationTracker(context)
 
+    /** 環境光追蹤：每幀樣本附上當下亮度，供條件感知漂移修正判斷亮度變化。 */
+    private val lightSensorTracker = LightSensorTracker(context)
+
     /** 關閉旗標：stop() 之後分析執行緒不得再碰 landmarker（否則對已釋放的原生物件送資料會 SIGSEGV）。 */
     @Volatile
     private var closed = false
@@ -52,6 +55,7 @@ class FaceTrackerEngine(
         if (landmarker != null || analysisExecutor != null) stop()
         closed = false
         orientationTracker.start()
+        lightSensorTracker.start()
         val options = FaceLandmarker.FaceLandmarkerOptions.builder()
             .setBaseOptions(
                 BaseOptions.builder()
@@ -70,11 +74,13 @@ class FaceTrackerEngine(
                         onSample(null)
                     } else {
                         val orientation = orientationTracker.snapshot()
+                        val lux = lightSensorTracker.snapshot()
                         onSample(
-                            if (orientation == null) sample
+                            if (orientation == null && lux == null) sample
                             else sample.copy(
-                                devicePitch = orientation.pitch,
-                                deviceRoll = orientation.roll,
+                                devicePitch = orientation?.pitch ?: Double.NaN,
+                                deviceRoll = orientation?.roll ?: Double.NaN,
+                                ambientLux = lux ?: Float.NaN,
                             )
                         )
                     }
@@ -198,6 +204,7 @@ class FaceTrackerEngine(
         // 順序很重要：先立旗標擋新幀 → 停相機 → 等分析執行緒清空 → 最後才釋放原生物件
         closed = true
         orientationTracker.stop()
+        lightSensorTracker.stop()
         cameraProvider?.unbindAll()
         cameraProvider = null
         analysisExecutor?.let {

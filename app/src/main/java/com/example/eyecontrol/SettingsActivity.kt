@@ -1,16 +1,27 @@
 package com.example.eyecontrol
 
+import android.app.AlertDialog
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
+import android.provider.Settings
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import com.example.eyecontrol.databinding.ActivitySettingsBinding
+import org.json.JSONObject
 
 /**
- * 可調參數設定頁：滑桿即時顯示數值，按「儲存」寫入 SharedPreferences。
- * 無障礙服務運作中也會透過偏好監聽即時套用，不必重啟服務。
- * 滑桿範圍與步進和 GazeSettings 的允許範圍一致，換算函數集中在此。
+ * 可調參數設定頁：9 分組，每項一句白話說明。
+ * 滑桿即時顯示數值，按「儲存」寫入 SharedPreferences；無障礙服務運作中也會透過
+ * 偏好監聽即時套用，不必重啟服務。滑桿範圍與步進和 GazeSettings 的允許範圍一致，
+ * 換算函數集中在此。
+ *
+ * 本頁不新增任何設定 key：全部控制項只接 GazeSettings 現有 key。
+ * 沒有對應功能的項目（例如清除全部校正資料、游標大小、更新檢查開關）一律不顯示，
+ * 不做點了沒反應的假控制項。
  */
 class SettingsActivity : AppCompatActivity() {
 
@@ -50,9 +61,134 @@ class SettingsActivity : AppCompatActivity() {
 
         binding.switchGyro.isChecked = s.gyroCompensation
         binding.switchDistance.isChecked = s.distanceCompensation
+        binding.switchCondition.isChecked = s.conditionCorrection
+
+        // 開關整列可點：點列身切換開關，點開關本身由開關自己處理，不會重複觸發。
+        binding.rowCondition.setOnClickListener { binding.switchCondition.toggle() }
+        binding.rowDistance.setOnClickListener { binding.switchDistance.toggle() }
+        binding.rowGyro.setOnClickListener { binding.switchGyro.toggle() }
+
+        // 基本：情境切換（點一下換下一個，三個情境循環）。
+        binding.rowProfile.setOnClickListener {
+            val ids = CalibrationStore.PROFILES.map { it.id }
+            val next = ids[(ids.indexOf(CalibrationStore.getActiveProfileId(this)) + 1) % ids.size]
+            CalibrationStore.setActiveProfileId(this, next)
+            refreshProfileViews()
+            Toast.makeText(this, "已切換為「${CalibrationStore.profileName(next)}」", Toast.LENGTH_SHORT).show()
+        }
+
+        // 校正管理：重校目前情境（走與主畫面相同的相機權限檢查）。
+        binding.rowRecalibrate.setOnClickListener {
+            if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                Toast.makeText(this, "請先授予相機權限", Toast.LENGTH_SHORT).show()
+            } else {
+                val intent = Intent(this, CalibrationActivity::class.java)
+                intent.putExtra(
+                    CalibrationActivity.EXTRA_PROFILE_ID,
+                    CalibrationStore.getActiveProfileId(this),
+                )
+                startActivity(intent)
+            }
+        }
+
+        // 操作輔助：重新執行引導、系統無障礙設定。
+        binding.rowWizard.setOnClickListener {
+            startActivity(Intent(this, SetupWizardActivity::class.java))
+        }
+        // 校正管理：操作練習（與重校正相同的相機權限檢查；無模型時練習頁導引去校正）。
+        binding.rowTraining.setOnClickListener {
+            if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                Toast.makeText(this, "請先授予相機權限", Toast.LENGTH_SHORT).show()
+            } else {
+                startActivity(Intent(this, TrainingActivity::class.java))
+            }
+        }
+        binding.rowA11ySettings.setOnClickListener {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            Toast.makeText(this, "請在清單中找到「眼控 EyeControl」", Toast.LENGTH_LONG).show()
+        }
+
+        // 無障礙：系統顯示與字體大小設定。
+        binding.rowSystemDisplay.setOnClickListener {
+            runCatching { startActivity(Intent(Settings.ACTION_DISPLAY_SETTINGS)) }
+                .onFailure {
+                    Toast.makeText(this, "無法開啟系統顯示設定", Toast.LENGTH_SHORT).show()
+                }
+        }
+
+        // 隱私：如實說明（更新檢查會連線 api.github.com 查詢 releases）。
+        binding.rowPrivacy.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle("隱私說明")
+                .setMessage(
+                    "影像只在手機上即時處理，不儲存、不上傳；校正資料只有數學權重數值，存在手機本機。\n\n" +
+                        "唯一會連網的功能是「更新檢查」：App 啟動時向 api.github.com 查詢最新 release 版本，不傳送任何個人資料。",
+                )
+                .setPositiveButton("知道了", null)
+                .show()
+        }
+
+        // 系統資訊：關於。
+        binding.rowAbout.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle("關於 EyeControl")
+                .setMessage(
+                    "讓視線，成為自由操作的力量。\n\n" +
+                        "EyeControl 是開源的 Android 無障礙工具，用眼睛移動游標、凝視停留或眨眼來操作手機，給無法用手操作的人。\n\n" +
+                        "授權：MIT License。原始碼公開於 GitHub（shengwen0928/eyecontrol）。",
+                )
+                .setPositiveButton("知道了", null)
+                .show()
+        }
 
         binding.btnSave.setOnClickListener { saveAndFinish() }
         binding.btnDefaults.setOnClickListener { resetToDefaults() }
+
+        refreshProfileViews()
+        binding.valVersion.text = BuildConfig.VERSION_NAME
+        binding.valModelVersion.text = storedModelVersionText()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 從校正頁回來時，情境狀態與模型版本要跟著更新。
+        refreshProfileViews()
+        binding.valModelVersion.text = storedModelVersionText()
+    }
+
+    private fun refreshProfileViews() {
+        binding.valProfile.text =
+            CalibrationStore.profileName(CalibrationStore.getActiveProfileId(this))
+        binding.valProfileStates.text =
+            CalibrationStore.PROFILES.joinToString("\n") { profile ->
+                val state = if (CalibrationStore.exists(this, profile.id)) {
+                    val err = CalibrationStore.getMeta(this, profile.id)?.looErrorPx
+                        ?.let { "（留一法誤差 ${"%.0f".format(it)} px）" } ?: ""
+                    "已校正$err"
+                } else {
+                    "未校正"
+                }
+                "${profile.name}：$state"
+            }
+    }
+
+    /**
+     * 已存模型的格式版本：直接讀該情境存檔 JSON 的 version 欄位。
+     * GazeModel.MODEL_VERSION 是私有常數（GazeModel 本批不動），此處不硬編版本號；
+     * 模型格式升級時，顯示會跟著存檔內容走。沒有有效模型時顯示「尚未校正」。
+     */
+    private fun storedModelVersionText(): String {
+        val activeId = CalibrationStore.getActiveProfileId(this)
+        if (CalibrationStore.loadModel(this, activeId) == null) return "尚未校正"
+        // key 格式與 CalibrationStore 內部的 "model_<id>" 一致。
+        val raw = CalibrationStore.prefs(this).getString("model_$activeId", null)
+            ?: return "未知"
+        val version = runCatching { JSONObject(raw).optInt("version", 0) }.getOrDefault(0)
+        return if (version > 0) "v$version" else "未知"
     }
 
     private fun setupSlider(
@@ -87,6 +223,7 @@ class SettingsActivity : AppCompatActivity() {
             filterBeta = betaFromProgress(binding.seekBeta.progress),
             gyroCompensation = binding.switchGyro.isChecked,
             distanceCompensation = binding.switchDistance.isChecked,
+            conditionCorrection = binding.switchCondition.isChecked,
         ).clamped()
         s.save(this)
         Toast.makeText(this, "設定已儲存", Toast.LENGTH_SHORT).show()
@@ -105,6 +242,7 @@ class SettingsActivity : AppCompatActivity() {
         binding.seekBeta.progress = progressForBeta(d.filterBeta)
         binding.switchGyro.isChecked = d.gyroCompensation
         binding.switchDistance.isChecked = d.distanceCompensation
+        binding.switchCondition.isChecked = d.conditionCorrection
         Toast.makeText(this, "已恢復預設值（按儲存才生效）", Toast.LENGTH_SHORT).show()
     }
 

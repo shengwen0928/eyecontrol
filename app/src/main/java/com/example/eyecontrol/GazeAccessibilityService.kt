@@ -70,6 +70,9 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
     private val profileListener =
         SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
             model = CalibrationStore.loadModel(this, CalibrationStore.getActiveProfileId(this))
+            // reloadConditionState 觸及 overlay view，必須在主執行緒執行；
+            // 此 listener 可能在非主執行緒回呼，故 post 到主執行緒。
+            mainHandler.post { reloadConditionState() }
         }
 
     private val filterX = OneEuroFilter(minCutoff = 0.2, beta = 0.015)
@@ -78,6 +81,10 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
     /** 校正頁開啟期間暫停追蹤（相機同程序只有一路，兩邊搶會互踢）。 */
     @Volatile
     private var pausedForCalibration = false
+
+    /** 使用者從 Dashboard 按「停止追蹤」：引擎停表且不再自動重啟，直到按「開始眼控」。 */
+    @Volatile
+    private var userStopped = false
 
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
@@ -108,6 +115,25 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
 
     private var screenW = 0
     private var screenH = 0
+
+    // 條件感知漂移修正狀態（只在主執行緒讀寫，與 onSampleOnMainThread 同執行緒）
+    private var appliedOffsetX = 0f
+    private var appliedOffsetY = 0f
+    private var smoothedPitch = Double.NaN
+    private var smoothedRoll = Double.NaN
+    private var smoothedIod = Double.NaN
+    private var smoothedLux = Float.NaN
+    private var conditionSeeded = false
+    private var lastConditionCheckAt = 0L
+    private var reminderCooldownUntil = 0L
+
+    // 提醒（單點快速校正）狀態
+    private var reminderActive = false
+    private var reminderShownAt = 0L
+    private var reminderDwellAccumMs = 0L
+    private var reminderLastFrameAt = 0L
+    private var reminderAwaySince = 0L
+    private val reminderRawPoints = mutableListOf<Pair<Double, Double>>()
 
     override fun onCreate() {
         super.onCreate()
@@ -152,6 +178,8 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         screenH = bounds.height()
         filterX.reset()
         filterY.reset()
+        // 旋轉後座標系全變：提醒收掉、條件狀態重置，等下次評估重新推算
+        reloadConditionState()
     }
 
     private fun startForegroundService() {
@@ -179,7 +207,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
 
     /** 建立並啟動追蹤引擎；同時（重新）載入目前情境的校正模型。校正後恢復也走這裡。 */
     private fun startEngine() {
-        if (pausedForCalibration) return
+        if (pausedForCalibration || userStopped) return
         // 冪等重啟：先停舊引擎，否則新舊兩台會搶相機（舊的在背景執行緒 stop 時也可能誤殺新的）
         engine?.stop()
         engine = null
@@ -190,6 +218,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         }
         filterX.reset()
         filterY.reset()
+        reloadConditionState()
         engine = FaceTrackerEngine(this) { sample -> onSample(sample) }
         engine?.start(this)
     }
@@ -233,7 +262,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
 
     /** 每一幀的處理（背景執行緒進來，UI 更新丟回主執行緒）。 */
     private fun onSample(sample: GazeSample?) {
-        if (pausedForCalibration) return
+        if (pausedForCalibration || userStopped) return
         mainHandler.post {
             onSampleOnMainThread(sample)
         }
@@ -241,12 +270,22 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
 
     private fun onSampleOnMainThread(sample: GazeSample?) {
         if (pausedForCalibration) return
+        // Dashboard 即時狀態：只記錄「有無收到樣本／有無臉／有無有效游標／有無模型」，
+        // 不存影像與特徵；新鮮度由讀取端以 lastSampleAtMs 判斷。
+        lastSampleAtMs = SystemClock.elapsedRealtime()
+        lastFacePresent = sample != null
+        lastCursorValid = hasValidCursor
+        lastHasModel = model != null
         val m = model ?: return
         val cursor = cursorView ?: return
 
         if (sample == null) {
             // 偵測不到臉：游標留在原地變灰，讓使用者知道是「臉不見了」而不是當機
             cursor.setFaceLost()
+            // 提醒顯示中也要推進狀態機（逾時／移開邏輯），否則臉遺失期間提醒永遠不消失
+            if (reminderActive) {
+                updateReminder(null, null, null, null, SystemClock.elapsedRealtime())
+            }
             return
         }
 
@@ -271,8 +310,9 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             if (isBlinking) {
                 isBlinking = false
                 val blinkDuration = now - blinkStartTime
-                // 故意眨眼點擊：閉眼時間在 150ms 到 600ms 之間，且非暫停模式
-                if (blinkDuration in settings.blinkMinMs..settings.blinkMaxMs && hasValidCursor && now >= cooldownUntil && currentMode != ActionMode.PAUSED) {
+                // 故意眨眼點擊：閉眼時間在 150ms 到 600ms 之間，且非暫停模式；
+                // 提醒顯示期間不觸發點擊（提醒狀態機接管這一幀的後續流程）
+                if (blinkDuration in settings.blinkMinMs..settings.blinkMaxMs && hasValidCursor && now >= cooldownUntil && currentMode != ActionMode.PAUSED && !reminderActive) {
                     triggerActionAt(lastValidX, lastValidY)
                     cooldownUntil = now + settings.cooldownMs
                     dwellStart = now
@@ -302,6 +342,15 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             settings.gyroCompensation, settings.distanceCompensation,
         )
 
+        // 條件取樣：每幀平滑亮度／角度／臉距，供變化偵測與歷史紀錄用
+        updateSmoothedCondition(sample)
+
+        // 條件感知漂移修正的偏移：預測之後、濾波之前加上；開關關閉時不套用
+        val effOffsetX = if (settings.conditionCorrection) appliedOffsetX else 0f
+        val effOffsetY = if (settings.conditionCorrection) appliedOffsetY else 0f
+        val correctedX = rawX + effOffsetX
+        val correctedY = rawY + effOffsetY
+
         // 臉轉向辨識（只記錄變化）：方向補償本身在模型裡以帶符號差值處理，這裡僅讓轉向可見
         val faceTurn = GazeFeatureExtractor.faceTurnDirection(sample.features, m.basePitch, m.baseYaw)
         if (faceTurn != lastFaceTurn) {
@@ -309,13 +358,27 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             Log.d(TAG, "臉轉向：$faceTurn")
         }
         val t = sample.timestampMs / 1000.0
-        val x = filterX.filter(rawX, t).toFloat().coerceIn(0f, screenW - 1f)
-        val y = filterY.filter(rawY, t).toFloat().coerceIn(0f, screenH - 1f)
+        val x = filterX.filter(correctedX, t).toFloat().coerceIn(0f, screenW - 1f)
+        val y = filterY.filter(correctedY, t).toFloat().coerceIn(0f, screenH - 1f)
 
         // 更新最後的有效位置
         lastCursorX = x
         lastCursorY = y
         hasValidCursor = true
+
+        // 條件變化評估（約每 0.5 秒一次）：變化大時查歷史內插，沒遇過才跳提醒
+        if (now - lastConditionCheckAt >= CONDITION_CHECK_INTERVAL_MS) {
+            lastConditionCheckAt = now
+            evaluateConditions(now)
+        }
+
+        // 提醒顯示期間：只跑提醒狀態機，不做面板／停留／邊緣點擊，避免誤觸
+        if (reminderActive) {
+            cursor.setCursor(Triple(x, y, 0f))
+            updateReminder(x, y, rawX, rawY, now)
+            currentProgress = 0f
+            return
+        }
 
         val edgeSize = 50f
         val isAtLeft = x < edgeSize
@@ -417,6 +480,216 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             y
         }
         cursor.setCursor(Triple(displayX, displayY, progress))
+    }
+
+    // ---- 條件感知漂移修正 ----
+
+    /** 情境／引擎重啟／旋轉時重置條件狀態：提醒收掉、偏移歸零，等下次評估重新推算。 */
+    private fun reloadConditionState() {
+        dismissReminder(markSkipped = false)
+        appliedOffsetX = 0f
+        appliedOffsetY = 0f
+        smoothedPitch = Double.NaN
+        smoothedRoll = Double.NaN
+        smoothedIod = Double.NaN
+        smoothedLux = Float.NaN
+        conditionSeeded = false
+        lastConditionCheckAt = 0L
+        reminderCooldownUntil = 0L
+    }
+
+    /** 每幀平滑條件分量：未知分量（NaN）跳過，不污染已有的平滑值。 */
+    private fun updateSmoothedCondition(sample: GazeSample) {
+        if (sample.devicePitch.isFinite()) {
+            smoothedPitch = smoothDouble(smoothedPitch, sample.devicePitch)
+        }
+        if (sample.deviceRoll.isFinite()) {
+            smoothedRoll = smoothDouble(smoothedRoll, sample.deviceRoll)
+        }
+        val iod = sample.features.getOrNull(6) ?: Double.NaN
+        if (iod.isFinite() && iod > 0.0) {
+            smoothedIod = smoothDouble(smoothedIod, iod)
+        }
+        if (sample.ambientLux.isFinite() && sample.ambientLux >= 0f) {
+            smoothedLux = if (smoothedLux.isNaN()) sample.ambientLux
+            else smoothedLux + (sample.ambientLux - smoothedLux) * CONDITION_SMOOTH_ALPHA.toFloat()
+        }
+    }
+
+    private fun smoothDouble(prev: Double, current: Double): Double =
+        if (prev.isNaN()) current else prev + (current - prev) * CONDITION_SMOOTH_ALPHA
+
+    private fun currentCondition(): ConditionHistory.Condition =
+        ConditionHistory.Condition(
+            luxBucket = ConditionHistory.luxBucket(smoothedLux),
+            pitch = smoothedPitch,
+            roll = smoothedRoll,
+            iod = smoothedIod,
+        )
+
+    /** 條件變化評估：變化大時先查歷史內插，沒遇過的條件才跳提醒。 */
+    private fun evaluateConditions(now: Long) {
+        if (!settings.conditionCorrection) return
+        if (model == null || pausedForCalibration) return
+        if (reminderActive || now < reminderCooldownUntil) return
+        if (currentMode == ActionMode.PAUSED) return
+        val profileId = CalibrationStore.getActiveProfileId(this)
+        val cur = currentCondition()
+        val ref = ConditionHistory.loadReference(this, profileId)
+        if (ref == null) {
+            // 還沒有基準（例如升級後首次使用）：靜默建立，不提醒
+            ConditionHistory.saveReference(this, profileId, cur)
+            conditionSeeded = true
+            return
+        }
+        val changed = ConditionHistory.hasSignificantChange(ref, cur)
+        if (!changed && conditionSeeded) return
+        // 首次評估或條件變了：查歷史
+        val inferred = ConditionHistory.interpolate(
+            ConditionHistory.loadRecords(this, profileId), cur,
+        )
+        conditionSeeded = true
+        if (inferred != null) {
+            appliedOffsetX = inferred.first
+            appliedOffsetY = inferred.second
+            ConditionHistory.saveReference(this, profileId, cur)
+            Log.d(TAG, "條件變化，以歷史紀錄內插偏移=($appliedOffsetX, $appliedOffsetY)")
+            return
+        }
+        if (!changed) return // 首次評估、條件沒變、又沒歷史：不用提醒
+        showReminder(now)
+    }
+
+    private fun showReminder(now: Long) {
+        reminderActive = true
+        reminderShownAt = now
+        reminderDwellAccumMs = 0L
+        reminderLastFrameAt = now
+        reminderAwaySince = 0L
+        reminderRawPoints.clear()
+        // 清掉面板 hover、待滑動起點與 dwell 進度，避免提醒期間誤觸
+        hoverBtnIndex = -1
+        controlView?.setHover(-1, 0f)
+        swipeStartPoint = null
+        controlView?.swipeState = 0
+        controlView?.invalidate()
+        anchorX = screenW / 2f
+        anchorY = screenH / 2f
+        dwellStart = now
+        currentProgress = 0f
+        cursorView?.showReminderTarget(
+            screenW / 2f, screenH / 2f, "注視 1 秒，自動校正游標偏移",
+        )
+        Log.d(TAG, "條件變化，顯示快速校正提醒")
+    }
+
+    /**
+     * 收掉提醒。markSkipped = true 表示使用者略過（移開視線／逾時）：
+     * 以目前條件為新基準、並冷卻 60 秒不再提醒，避免同一條件反覆跳提醒。
+     * 內部原因（切換情境、關開關、旋轉）收掉時不記略過。
+     */
+    private fun dismissReminder(markSkipped: Boolean) {
+        if (!reminderActive) return
+        reminderActive = false
+        reminderRawPoints.clear()
+        cursorView?.hideReminderTarget()
+        // 重置 dwell 起點：避免提醒收掉後，沿用提醒顯示時的 dwellStart 立即誤觸
+        dwellStart = SystemClock.elapsedRealtime()
+        currentProgress = 0f
+        if (markSkipped) {
+            ConditionHistory.saveReference(
+                this, CalibrationStore.getActiveProfileId(this), currentCondition(),
+            )
+            reminderCooldownUntil =
+                SystemClock.elapsedRealtime() + REMINDER_SKIP_COOLDOWN_MS
+        }
+    }
+
+    /**
+     * 提醒狀態機：有效幀與臉遺失幀都會推進（臉遺失時 gaze 為 null）。
+     * 目標注視 1 秒完成單點校正；移開視線持續 0.5 秒或 5 秒逾時＝略過。
+     */
+    private fun updateReminder(
+        gazeX: Float?, gazeY: Float?,
+        rawX: Double?, rawY: Double?,
+        now: Long,
+    ) {
+        if (!settings.conditionCorrection) {
+            dismissReminder(markSkipped = false)
+            return
+        }
+        if (now - reminderShownAt > REMINDER_TIMEOUT_MS) {
+            Log.d(TAG, "提醒逾時，略過快速校正")
+            dismissReminder(markSkipped = true)
+            return
+        }
+        val tx = screenW / 2f
+        val ty = screenH / 2f
+        if (gazeX == null || gazeY == null) {
+            // 臉遺失：視為不在目標上（不收樣本），逾時／移開邏輯照走
+            noteReminderAway(now)
+            return
+        }
+        val dt = (now - reminderLastFrameAt).coerceIn(0L, 200L)
+        reminderLastFrameAt = now
+        if (hypot(gazeX - tx, gazeY - ty) <= REMINDER_DWELL_RADIUS_PX) {
+            reminderAwaySince = 0L
+            reminderDwellAccumMs += dt
+            if (rawX != null && rawY != null) reminderRawPoints.add(rawX to rawY)
+            if (reminderDwellAccumMs >= REMINDER_DWELL_MS &&
+                reminderRawPoints.size >= REMINDER_MIN_SAMPLES
+            ) {
+                completeQuickCalibration(now)
+            }
+        } else {
+            reminderDwellAccumMs = 0L
+            reminderRawPoints.clear()
+            noteReminderAway(now)
+        }
+    }
+
+    /** 視線離開提醒目標：持續超過 0.5 秒視為略過。 */
+    private fun noteReminderAway(now: Long) {
+        if (reminderAwaySince == 0L) {
+            reminderAwaySince = now
+        } else if (now - reminderAwaySince > REMINDER_AWAY_MS) {
+            Log.d(TAG, "移開視線，略過快速校正")
+            dismissReminder(markSkipped = true)
+        }
+    }
+
+    /** 單點快速校正完成：偏移 = 中央目標 − 注視期間預測點平均，寫入歷史並套用。 */
+    private fun completeQuickCalibration(now: Long) {
+        val tx = screenW / 2f
+        val ty = screenH / 2f
+        val meanX = reminderRawPoints.map { it.first }.average()
+        val meanY = reminderRawPoints.map { it.second }.average()
+        val ox = (tx - meanX).toFloat()
+            .coerceIn(-ConditionHistory.MAX_OFFSET_PX, ConditionHistory.MAX_OFFSET_PX)
+        val oy = (ty - meanY).toFloat()
+            .coerceIn(-ConditionHistory.MAX_OFFSET_PX, ConditionHistory.MAX_OFFSET_PX)
+        val profileId = CalibrationStore.getActiveProfileId(this)
+        val cond = currentCondition()
+        ConditionHistory.addRecord(
+            this, profileId,
+            ConditionHistory.Record(cond, ox, oy, now),
+        )
+        ConditionHistory.saveReference(this, profileId, cond)
+        appliedOffsetX = ox
+        appliedOffsetY = oy
+        reminderActive = false
+        reminderRawPoints.clear()
+        cursorView?.hideReminderTarget()
+        // 避免校正完立刻在中央誤觸：重置 dwell 狀態並給一次冷卻
+        anchorX = tx
+        anchorY = ty
+        dwellStart = now
+        currentProgress = 0f
+        cooldownUntil = now + settings.cooldownMs
+        Log.d(TAG, "單點快速校正完成：偏移=($ox, $oy)，條件=$cond")
+        mainHandler.post {
+            Toast.makeText(this, "已快速校正", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun triggerActionAt(x: Float, y: Float) {
@@ -603,6 +876,13 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
                 if (target != null && svc.engine === target) svc.engine = null
                 svc.mainHandler.post {
                     svc.cursorView?.setCursor(null)
+                    // 提醒目標蓋在最上層，校正期間一併收掉，免得蓋住校正畫面
+                    svc.cursorView?.hideReminderTarget()
+                    // 模式面板是常駐 overlay：暫停期間把它藏起來，否則會蓋住
+                    // 校正／訓練頁右側的目標點（面板看得見但已停止反應）。
+                    // 面板只在 onServiceConnected 建立一次、沒有重建路徑，
+                    // 恢復時在 resumeAfterCalibration 設回 VISIBLE 即可。
+                    svc.controlView?.visibility = View.GONE
                     onReleased()
                 }
             }.start()
@@ -613,11 +893,119 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             val svc = instance ?: return
             svc.mainHandler.post {
                 svc.pausedForCalibration = false
+                // 把暫停期間藏起來的模式面板恢復顯示。
+                svc.controlView?.visibility = View.VISIBLE
                 svc.startEngine()
             }
         }
 
+        // ---- Dashboard 即時狀態與操作（只讀寫狀態旗標，不動追蹤管線） ----
+
+        /** 最近一幀是否有臉（由 onSampleOnMainThread 更新）。僅服務內部寫入。 */
+        @Volatile
+        var lastFacePresent: Boolean = false
+
+        /** 最近一幀收到的時間（elapsedRealtime）；用來判斷狀態是否新鮮。僅服務內部寫入。 */
+        @Volatile
+        var lastSampleAtMs: Long = 0L
+
+        /** 是否曾收到有效游標位置。僅服務內部寫入。 */
+        @Volatile
+        var lastCursorValid: Boolean = false
+
+        /** 最近一幀時是否有載入模型。僅服務內部寫入。 */
+        @Volatile
+        var lastHasModel: Boolean = false
+
+        /** 樣本新鮮度門檻：超過此時間沒收到樣本，狀態視為未知。 */
+        const val SAMPLE_FRESH_MS = 3000L
+
+        /** Dashboard 讀取的追蹤快照；服務未啟用時回 null。 */
+        data class TrackingSnapshot(
+            val facePresent: Boolean,
+            val sampleFresh: Boolean,
+            val cursorValid: Boolean,
+            val paused: Boolean,
+            val stopped: Boolean,
+            val hasModel: Boolean,
+        )
+
+        fun trackingSnapshot(): TrackingSnapshot? {
+            val svc = instance ?: return null
+            val fresh = SystemClock.elapsedRealtime() - lastSampleAtMs <= SAMPLE_FRESH_MS
+            return TrackingSnapshot(
+                facePresent = lastFacePresent && fresh,
+                sampleFresh = fresh,
+                cursorValid = lastCursorValid,
+                paused = svc.currentMode == ActionMode.PAUSED,
+                stopped = svc.userStopped,
+                hasModel = lastHasModel,
+            )
+        }
+
+        /** Dashboard「暫停眼控」：切到 PAUSED 模式（游標隱藏，只剩面板「重啟」鍵）。 */
+        fun pauseTracking() {
+            val svc = instance ?: return
+            svc.mainHandler.post {
+                svc.currentMode = ActionMode.PAUSED
+                svc.controlView?.activeMode = ActionMode.PAUSED
+                svc.controlView?.invalidate()
+                svc.cursorView?.setCursor(null)
+            }
+        }
+
+        /** Dashboard「開始眼控」：解除暫停／解除停止，引擎未跑就啟動。 */
+        fun resumeTracking() {
+            val svc = instance ?: return
+            svc.mainHandler.post {
+                svc.userStopped = false
+                if (svc.currentMode == ActionMode.PAUSED) {
+                    svc.currentMode = ActionMode.TAP
+                    svc.controlView?.activeMode = ActionMode.TAP
+                    svc.controlView?.invalidate()
+                }
+                if (svc.engine == null) svc.startEngine()
+            }
+        }
+
+        /** Dashboard「停止追蹤」：停引擎、關相機、藏游標；直到按「開始眼控」才恢復。 */
+        fun stopTracking() {
+            val svc = instance ?: return
+            // 先立旗標擋住 startEngine，避免停表期間被重啟；停表本身放背景執行緒
+            // （engine.stop() 會阻塞等分析執行緒排空，不可卡主執行緒）。
+            svc.userStopped = true
+            Thread {
+                val target = svc.engine
+                target?.stop()
+                if (target != null && svc.engine === target) svc.engine = null
+                svc.mainHandler.post {
+                    svc.hasValidCursor = false
+                    lastFacePresent = false
+                    lastCursorValid = false
+                    lastSampleAtMs = 0L
+                    svc.cursorView?.setCursor(null)
+                    svc.cursorView?.hideReminderTarget()
+                    svc.reloadConditionState()
+                    // 停止期間按了開始、userStopped 已被清掉：引擎已被置 null，在此重啟，
+                    // 否則狀態會停在「未停止、無引擎、無路徑重啟」的死角。
+                    if (!svc.userStopped && svc.engine == null) svc.startEngine()
+                }
+            }.start()
+        }
+
         private const val TAG = "GazeService"
+
+        // 條件感知漂移修正的節奏常數（變化閾值本身集中在 ConditionHistory）
+        private const val CONDITION_CHECK_INTERVAL_MS = 500L
+        private const val CONDITION_SMOOTH_ALPHA = 0.15
+        private const val REMINDER_DWELL_MS = 1000L
+        private const val REMINDER_TIMEOUT_MS = 5000L
+        private const val REMINDER_AWAY_MS = 500L
+        // 注視半徑必須大於常見的未修正漂移量（否則永遠完不成校正）；偏移取預測點平均，
+        // 半徑只決定「是不是在看目標」，放寬不影響量測精度
+        private const val REMINDER_DWELL_RADIUS_PX = 200f
+        private const val REMINDER_SKIP_COOLDOWN_MS = 60_000L
+        private const val REMINDER_MIN_SAMPLES = 5
         // 行為參數（停留時間、冷卻、眨眼、平滑）統一由 GazeSettings 提供，此處不再寫死。
     }
 }

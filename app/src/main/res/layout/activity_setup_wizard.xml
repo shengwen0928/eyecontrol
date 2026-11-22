@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 設定引導：5 步共用一個版面，內容由 SetupWizardActivity 依步驟填入。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="24dp">
+
+    <TextView
+        android:id="@+id/wizardStepLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="第 1 步，共 5 步"
+        android:textColor="@color/ec_text_secondary"
+        android:textSize="@dimen/ec_text_small" />
+
+    <ProgressBar
+        android:id="@+id/wizardProgress"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="8dp"
+        android:layout_marginTop="8dp"
+        android:max="5"
+        android:progress="1"
+        android:progressTint="@color/ec_sage_deep" />
+
+    <TextView
+        android:id="@+id/wizardTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="24dp"
+        android:textSize="@dimen/ec_text_title"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/wizardDesc"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:textColor="@color/ec_text_secondary"
+        android:textSize="@dimen/ec_text_body" />
+
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/wizardStatusCard"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="20dp"
+        android:visibility="gone"
+        app:cardBackgroundColor="@color/ec_sage_soft"
+        app:cardCornerRadius="@dimen/ec_card_radius"
+        app:cardElevation="0dp">
+
+        <TextView
+            android:id="@+id/wizardStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="16dp"
+            android:textColor="@color/ec_text"
+            android:textSize="@dimen/ec_text_small" />
+    </com.google.android.material.card.MaterialCardView>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnWizardPrimary"
+        style="@style/Widget.Material3.Button"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/ec_button_height"
+        android:contentDescription="繼續"
+        android:text="繼續"
+        app:backgroundTint="@color/ec_sage_deep"
+        app:cornerRadius="@dimen/ec_card_radius" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnWizardSkip"
+        style="@style/Widget.Material3.Button.TextButton"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/ec_button_height"
+        android:layout_marginTop="4dp"
+        android:contentDescription="先跳過這一步，之後再完成"
+        android:text="先跳過，之後再做"
+        android:visibility="gone" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnWizardBack"
+        style="@style/Widget.Material3.Button.TextButton"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/ec_button_height"
+        android:layout_marginTop="4dp"
+        android:contentDescription="上一步"
+        android:text="上一步" />
+</LinearLayout>

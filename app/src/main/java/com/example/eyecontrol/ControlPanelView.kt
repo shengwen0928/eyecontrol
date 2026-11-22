@@ -17,7 +17,8 @@ data class ControlPanelButton(
 )
 
 /**
- * 控制面板外觀樣式配置
+ * 控制面板外觀樣式配置（設計系統淺色系：暖白底、淺色分隔線、Deep Sage 選中態）。
+ * 只改外觀常數；尺寸、字級、按鍵邏輯一律不動。
  */
 data class ControlPanelConfig(
     val items: List<ControlPanelButton> = listOf(
@@ -27,11 +28,12 @@ data class ControlPanelConfig(
         ControlPanelButton(GazeAccessibilityService.ActionMode.SWIPE, "滑動", "↔️"),
         ControlPanelButton(GazeAccessibilityService.ActionMode.PAUSED, "暫停", "⏸️")
     ),
-    val backgroundColor: Int = Color.argb(195, 28, 28, 35),
-    val borderColor: Int = Color.argb(60, 255, 255, 255),
-    val activeBgColor: Int = Color.argb(180, 0, 176, 255),
-    val hoverBgColor: Int = Color.argb(80, 255, 255, 255),
-    val textColor: Int = Color.WHITE,
+    val backgroundColor: Int = Color.argb(245, 255, 255, 255),
+    val borderColor: Int = Color.argb(255, 238, 237, 232),
+    val activeBgColor: Int = Color.argb(255, 82, 111, 92),
+    val hoverBgColor: Int = Color.argb(140, 231, 238, 232),
+    val textColor: Int = Color.rgb(32, 37, 34),
+    val activeTextColor: Int = Color.WHITE,
     val textSize: Float = 28f,
     val iconSize: Float = 44f
 )
@@ -71,7 +73,18 @@ class ControlPanelView(
         textSize = config.textSize
         textAlign = Paint.Align.CENTER
     }
+    private val activeTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = config.activeTextColor
+        textSize = config.textSize
+        textAlign = Paint.Align.CENTER
+    }
     private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = config.textColor
+        textSize = config.iconSize
+        textAlign = Paint.Align.CENTER
+    }
+    private val activeIconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = config.activeTextColor
         textSize = config.iconSize
         textAlign = Paint.Align.CENTER
     }
@@ -112,14 +125,15 @@ class ControlPanelView(
             val iconY = btnTop + btnHeight * 0.42f
             val labelY = btnTop + btnHeight * 0.78f
 
-            canvas.drawText(item.iconText, width / 2f, iconY, iconPaint)
+            // 選中態用白字（Deep Sage 底），未選中用深灰字（暖白底），兩種狀態都有文字。
+            canvas.drawText(item.iconText, width / 2f, iconY, if (isActive) activeIconPaint else iconPaint)
 
             val text = when {
                 activeMode == GazeAccessibilityService.ActionMode.PAUSED && item.mode == GazeAccessibilityService.ActionMode.PAUSED -> "重啟"
                 item.mode == GazeAccessibilityService.ActionMode.SWIPE && swipeState == 1 -> "終點"
                 else -> item.label
             }
-            canvas.drawText(text, width / 2f, labelY, textPaint)
+            canvas.drawText(text, width / 2f, labelY, if (isActive) activeTextPaint else textPaint)
 
             if (i < items.size - 1) {
                 canvas.drawLine(15f, btnBottom, width.toFloat() - 15f, btnBottom, borderPaint)

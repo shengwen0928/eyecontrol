@@ -37,6 +37,20 @@
             android:name=".SettingsActivity"
             android:exported="false" />
 
+        <activity
+            android:name=".WelcomeActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".SetupWizardActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".TrainingActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.EyeControl.Fullscreen" />
+
         <!-- 更新下載的 APK 分享給安裝程式（FileProvider，不直接暴露檔案路徑） -->
         <provider
             android:name="androidx.core.content.FileProvider"

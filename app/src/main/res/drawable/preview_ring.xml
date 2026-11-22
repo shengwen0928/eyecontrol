@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 游標預覽示意的凝視進度環：鼠尾草綠描邊圓圈。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <solid android:color="@android:color/transparent" />
+    <stroke android:width="3dp" android:color="@color/ec_sage" />
+</shape>

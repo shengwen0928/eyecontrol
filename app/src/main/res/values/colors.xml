@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- EyeControl 設計系統色票（MASTER 規格第三章，Phase 2 定稿）。 -->
+<resources>
+    <color name="ec_bg_ivory">#F7F6F2</color>
+    <color name="ec_card_white">#FFFFFF</color>
+    <color name="ec_stone">#EEEDE8</color>
+    <color name="ec_text">#202522</color>
+    <color name="ec_text_secondary">#747A75</color>
+    <color name="ec_text_muted">#A1A59F</color>
+    <color name="ec_sage">#819B89</color>
+    <color name="ec_sage_deep">#526F5C</color>
+    <color name="ec_sage_soft">#E7EEE8</color>
+    <color name="ec_blue_soft">#DCE9EF</color>
+    <color name="ec_blue_muted">#6E91A2</color>
+    <color name="ec_sand">#EAE3D8</color>
+    <color name="ec_success">#43866B</color>
+    <color name="ec_warning">#C18A48</color>
+    <color name="ec_error">#B85C58</color>
+    <color name="ec_disabled">#B9BDB9</color>
+</resources>

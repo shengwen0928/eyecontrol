@@ -150,14 +150,16 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 所有影像處理皆在裝置端即時完成：前鏡頭影像僅用於當下的視線推算，**不儲存、不上傳**；
 校正資料只有嶺回歸的權重數值（不含任何影像或生物特徵原始資料），以 `MODE_PRIVATE`
-存於本機 SharedPreferences。本 App 不連網、不含任何第三方追蹤。
+存於本機 SharedPreferences。唯一會連網的功能是「更新檢查」：App 啟動時向
+`api.github.com` 查詢最新 release 版本，不傳送任何個人資料；除此之外不連網，
+不含任何第三方追蹤。
 完整隱私說明見 `docs/privacy.html`。
 
 ## 貢獻
 
 歡迎 issue 與 pull request。提 PR 前請注意：
 
-- 維持裝置端運算、不上傳影像的原則；任何新增的網路行為都不接受。
+- 維持裝置端運算、不上傳影像的原則；任何新增的網路行為都必須在隱私說明中如實揭露。
 - 改動視線管線（特徵、模型、濾波）時，請同步更新 `docs/evaluation.md`
   的評估說明，並說明你如何驗證改動（實機、條件、數據）。
 - 沒有實機驗證的改動請在 PR 中明講，不要宣稱已驗證。

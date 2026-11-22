@@ -28,6 +28,12 @@ data class GazeSettings(
     val gyroCompensation: Boolean = false,
     /** 臉距修正：臉相對校正時靠近／遠離時，繞螢幕中心等比縮放預測偏移。 */
     val distanceCompensation: Boolean = true,
+    /**
+     * 條件感知漂移修正：持續比對亮度／裝置角度／臉距與上次矯正時的條件，變化大時
+     * 跳提醒做單點快速校正，並以歷史紀錄內插推算相近條件的偏移。
+     * 預設開啟；關掉時不偵測、不提醒、不套用推算偏移（行為與舊版相同）。
+     */
+    val conditionCorrection: Boolean = true,
 ) {
 
     fun clamped(): GazeSettings {
@@ -64,6 +70,7 @@ data class GazeSettings(
             putLong(KEY_FILTER_BETA, filterBeta.toRawBits())
             putBoolean(KEY_GYRO_COMPENSATION, gyroCompensation)
             putBoolean(KEY_DISTANCE_COMPENSATION, distanceCompensation)
+            putBoolean(KEY_CONDITION_CORRECTION, conditionCorrection)
         }.apply()
     }
 
@@ -108,6 +115,7 @@ data class GazeSettings(
         private const val KEY_FILTER_BETA = "filter_beta"
         private const val KEY_GYRO_COMPENSATION = "gyro_compensation"
         private const val KEY_DISTANCE_COMPENSATION = "distance_compensation"
+        private const val KEY_CONDITION_CORRECTION = "condition_correction"
 
         fun load(context: Context): GazeSettings {
             // 存檔損毀（型別不符等）時直接回預設值，不要讓例外沿 prefs 監聽炸開服務
@@ -130,6 +138,7 @@ data class GazeSettings(
                     ),
                     gyroCompensation = p.getBoolean(KEY_GYRO_COMPENSATION, false),
                     distanceCompensation = p.getBoolean(KEY_DISTANCE_COMPENSATION, true),
+                    conditionCorrection = p.getBoolean(KEY_CONDITION_CORRECTION, true),
                 ).clamped()
             } catch (e: Exception) {
                 GazeSettings()
