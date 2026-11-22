@@ -137,6 +137,11 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 需求：JDK 17、Android SDK (API 36)。模型檔 `app/src/main/assets/face_landmarker.task`
 來自 https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task
 
+簽名：debug 版用固定的公開 debug 鑰匙簽名（`app/debug-keystore.b64`，編譯時解回
+`debug.keystore`；標準 debug 憑證 android/android，不是正式發行鑰匙），目的是讓每台 CI
+編譯出的 APK 簽名一致，更新時可直接覆蓋安裝、不必刪除重裝。換固定簽名前的舊版
+（v0.5.0 之前）簽名每次編譯都不同，升級到 v0.5.1 需先刪除舊版再安裝一次，之後即可覆蓋更新。
+
 ## 已知限制（原型階段）
 
 - 精度約數十像素級，適合點大按鈕；頭部大幅移動後需重新校正

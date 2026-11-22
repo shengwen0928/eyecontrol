@@ -3,6 +3,18 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// 固定 debug 簽名：CI 每次編譯都用同一支鑰匙簽名，之後 App 內更新才能直接覆蓋安裝，
+// 不必刪除重裝。鑰匙是公開的標準 debug 憑證（android/android），不是正式發行鑰匙，
+// 以 base64 文字檔形式放在 repo 裡（推送工具只收文字檔），編譯時在這裡解回 PKCS12 檔。
+// 解出的 debug.keystore 已被 .gitignore 排除，不會進版本控管。
+val debugKeystoreFile = file("debug.keystore")
+val debugKeystoreB64File = file("debug-keystore.b64")
+if (!debugKeystoreFile.exists() && debugKeystoreB64File.exists()) {
+    debugKeystoreFile.writeBytes(
+        java.util.Base64.getMimeDecoder().decode(debugKeystoreB64File.readText())
+    )
+}
+
 android {
     namespace = "com.example.eyecontrol"
     compileSdk = 36
@@ -11,8 +23,19 @@ android {
         applicationId = "tw.com.zhu.eyecontrol"   // Play 上架識別碼（namespace 維持原程式碼包名即可）
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.5.0"
+        versionCode = 5
+        versionName = "0.5.1"
+    }
+
+    // 固定 debug 簽名（見檔案上方說明）：覆蓋安裝與 App 內更新都靠同一支簽名才能成立。
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            storeType = "PKCS12"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {
