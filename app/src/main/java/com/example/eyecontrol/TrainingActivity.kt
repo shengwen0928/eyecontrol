@@ -13,6 +13,7 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.text.Layout
 import android.text.StaticLayout
+import android.text.TextPaint
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -658,7 +659,7 @@ class TrainingActivity : AppCompatActivity() {
             textAlign = Paint.Align.CENTER
             isFakeBoldText = true
         }
-        private val instructionPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        private val instructionPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.rgb(116, 122, 117)
             textSize = 15f * scaledDensity
             textAlign = Paint.Align.CENTER
