@@ -20,6 +20,11 @@ data class GazeSettings(
     val filterMinCutoff: Double = DEFAULT_FILTER_MIN_CUTOFF,
     val filterBeta: Double = DEFAULT_FILTER_BETA,
     /**
+     * 游標靈敏度：預測點相對螢幕中心的偏移放大倍率。模型輸出偏保守、游標只聚在
+     * 中間附近時調高（眼球小幅移動就能到達邊緣）；游標亂飄時調低。預設 1.0 = 不變。
+     */
+    val sensitivity: Float = DEFAULT_SENSITIVITY,
+    /**
      * 陀螺儀角度修正：裝置相對校正姿勢傾斜時，幾何修正預測點。
      * 預設關閉：特徵 7/8 是相機影像座標系的量測，分不清「頭動」與「手機動」，
      * kx/ky 頭部補償可能已經把裝置轉動算過一次，兩邊會重複計算（pitch 方向）。
@@ -34,6 +39,11 @@ data class GazeSettings(
      * 預設開啟；關掉時不偵測、不提醒、不套用推算偏移（行為與舊版相同）。
      */
     val conditionCorrection: Boolean = true,
+    /**
+     * 診斷紀錄（暫時除錯用）：開啟後在本機記錄游標數據（數字 only，不含影像、
+     * 不上傳），供分析游標不動／偏移的原因。預設關閉；記錄最多 120 秒自動停止。
+     */
+    val diagnosticLogging: Boolean = false,
 ) {
 
     fun clamped(): GazeSettings {
@@ -42,6 +52,7 @@ data class GazeSettings(
         val safeThreshold = blinkThreshold.takeIf { it.isFinite() } ?: DEFAULT_BLINK_THRESHOLD
         val safeCutoff = filterMinCutoff.takeIf { it.isFinite() } ?: DEFAULT_FILTER_MIN_CUTOFF
         val safeBeta = filterBeta.takeIf { it.isFinite() } ?: DEFAULT_FILTER_BETA
+        val safeSensitivity = sensitivity.takeIf { it.isFinite() } ?: DEFAULT_SENSITIVITY
         val safeBlinkMin = blinkMinMs.coerceIn(MIN_BLINK_MIN_MS, MAX_BLINK_MIN_MS)
         // 眨眼上下限必須成有效區間：上限不得小於下限，否則眨眼點擊永遠觸發不了
         val safeBlinkMax = blinkMaxMs.coerceIn(MIN_BLINK_MAX_MS, MAX_BLINK_MAX_MS)
@@ -55,6 +66,7 @@ data class GazeSettings(
             blinkThreshold = safeThreshold.coerceIn(MIN_BLINK_THRESHOLD, MAX_BLINK_THRESHOLD),
             filterMinCutoff = safeCutoff.coerceIn(MIN_FILTER_MIN_CUTOFF, MAX_FILTER_MIN_CUTOFF),
             filterBeta = safeBeta.coerceIn(MIN_FILTER_BETA, MAX_FILTER_BETA),
+            sensitivity = safeSensitivity.coerceIn(MIN_SENSITIVITY, MAX_SENSITIVITY),
         )
     }
 
@@ -68,9 +80,11 @@ data class GazeSettings(
             putLong(KEY_BLINK_THRESHOLD, blinkThreshold.toRawBits())
             putLong(KEY_FILTER_CUTOFF, filterMinCutoff.toRawBits())
             putLong(KEY_FILTER_BETA, filterBeta.toRawBits())
+            putFloat(KEY_SENSITIVITY, sensitivity)
             putBoolean(KEY_GYRO_COMPENSATION, gyroCompensation)
             putBoolean(KEY_DISTANCE_COMPENSATION, distanceCompensation)
             putBoolean(KEY_CONDITION_CORRECTION, conditionCorrection)
+            putBoolean(KEY_DIAGNOSTIC_LOGGING, diagnosticLogging)
         }.apply()
     }
 
@@ -86,6 +100,7 @@ data class GazeSettings(
         const val DEFAULT_BLINK_THRESHOLD = 0.08
         const val DEFAULT_FILTER_MIN_CUTOFF = 0.22
         const val DEFAULT_FILTER_BETA = 0.018
+        const val DEFAULT_SENSITIVITY = 1.0f
 
         // 允許範圍（設定頁滑桿範圍與此一致）
         const val MIN_DWELL_TIME_MS = 400L
@@ -104,6 +119,8 @@ data class GazeSettings(
         const val MAX_FILTER_MIN_CUTOFF = 0.50
         const val MIN_FILTER_BETA = 0.005
         const val MAX_FILTER_BETA = 0.050
+        const val MIN_SENSITIVITY = 0.5f
+        const val MAX_SENSITIVITY = 2.5f
 
         private const val KEY_DWELL_TIME = "dwell_time_ms"
         private const val KEY_COOLDOWN = "cooldown_ms"
@@ -113,9 +130,11 @@ data class GazeSettings(
         private const val KEY_BLINK_THRESHOLD = "blink_threshold"
         private const val KEY_FILTER_CUTOFF = "filter_min_cutoff"
         private const val KEY_FILTER_BETA = "filter_beta"
+        private const val KEY_SENSITIVITY = "sensitivity"
         private const val KEY_GYRO_COMPENSATION = "gyro_compensation"
         private const val KEY_DISTANCE_COMPENSATION = "distance_compensation"
         private const val KEY_CONDITION_CORRECTION = "condition_correction"
+        private const val KEY_DIAGNOSTIC_LOGGING = "diagnostic_logging"
 
         fun load(context: Context): GazeSettings {
             // 存檔損毀（型別不符等）時直接回預設值，不要讓例外沿 prefs 監聽炸開服務
@@ -136,9 +155,11 @@ data class GazeSettings(
                     filterBeta = Double.fromBits(
                         p.getLong(KEY_FILTER_BETA, DEFAULT_FILTER_BETA.toRawBits())
                     ),
+                    sensitivity = p.getFloat(KEY_SENSITIVITY, DEFAULT_SENSITIVITY),
                     gyroCompensation = p.getBoolean(KEY_GYRO_COMPENSATION, false),
                     distanceCompensation = p.getBoolean(KEY_DISTANCE_COMPENSATION, true),
                     conditionCorrection = p.getBoolean(KEY_CONDITION_CORRECTION, true),
+                    diagnosticLogging = p.getBoolean(KEY_DIAGNOSTIC_LOGGING, false),
                 ).clamped()
             } catch (e: Exception) {
                 GazeSettings()

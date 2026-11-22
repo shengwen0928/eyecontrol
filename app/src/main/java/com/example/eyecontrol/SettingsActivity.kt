@@ -1,11 +1,15 @@
 package com.example.eyecontrol
 
 import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.provider.Settings
 import android.view.View
+import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
@@ -13,6 +17,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.example.eyecontrol.databinding.ActivitySettingsBinding
 import org.json.JSONObject
+import kotlin.math.roundToInt
 
 /**
  * 可調參數設定頁：9 分組，每項一句白話說明。
@@ -20,9 +25,8 @@ import org.json.JSONObject
  * 偏好監聽即時套用，不必重啟服務。滑桿範圍與步進和 GazeSettings 的允許範圍一致，
  * 換算函數集中在此。
  *
- * 本頁不新增任何設定 key：全部控制項只接 GazeSettings 現有 key。
- * 沒有對應功能的項目（例如清除全部校正資料、游標大小、更新檢查開關）一律不顯示，
- * 不做點了沒反應的假控制項。
+ * 本頁每項控制項都接真實功能與設定 key，沒有點了沒反應的假控制項
+ *（例如清除全部校正資料、游標大小、更新檢查開關一律不顯示）。
  */
 class SettingsActivity : AppCompatActivity() {
 
@@ -59,15 +63,21 @@ class SettingsActivity : AppCompatActivity() {
         setupSlider(binding.seekBeta, binding.valBeta, MAX_BETA_PROGRESS, progressForBeta(s.filterBeta)) {
             "%.3f".format(betaFromProgress(it))
         }
+        setupSlider(binding.seekSensitivity, binding.valSensitivity, MAX_SENSITIVITY_PROGRESS, progressForSensitivity(s.sensitivity)) {
+            "%.1f".format(sensitivityFromProgress(it))
+        }
 
         binding.switchGyro.isChecked = s.gyroCompensation
         binding.switchDistance.isChecked = s.distanceCompensation
         binding.switchCondition.isChecked = s.conditionCorrection
+        binding.switchDiag.isChecked = s.diagnosticLogging
 
         // 開關整列可點：點列身切換開關，點開關本身由開關自己處理，不會重複觸發。
         binding.rowCondition.setOnClickListener { binding.switchCondition.toggle() }
         binding.rowDistance.setOnClickListener { binding.switchDistance.toggle() }
         binding.rowGyro.setOnClickListener { binding.switchGyro.toggle() }
+        binding.rowDiag.setOnClickListener { binding.switchDiag.toggle() }
+        binding.rowDiagSummary.setOnClickListener { showDiagSummary() }
 
         // 基本：情境切換（點一下換下一個，三個情境循環）。
         binding.rowProfile.setOnClickListener {
@@ -236,9 +246,11 @@ class SettingsActivity : AppCompatActivity() {
             blinkThreshold = thresholdFromProgress(binding.seekThreshold.progress),
             filterMinCutoff = cutoffFromProgress(binding.seekCutoff.progress),
             filterBeta = betaFromProgress(binding.seekBeta.progress),
+            sensitivity = sensitivityFromProgress(binding.seekSensitivity.progress),
             gyroCompensation = binding.switchGyro.isChecked,
             distanceCompensation = binding.switchDistance.isChecked,
             conditionCorrection = binding.switchCondition.isChecked,
+            diagnosticLogging = binding.switchDiag.isChecked,
         ).clamped()
         s.save(this)
         Toast.makeText(this, "設定已儲存", Toast.LENGTH_SHORT).show()
@@ -255,10 +267,46 @@ class SettingsActivity : AppCompatActivity() {
         binding.seekThreshold.progress = progressForThreshold(d.blinkThreshold)
         binding.seekCutoff.progress = progressForCutoff(d.filterMinCutoff)
         binding.seekBeta.progress = progressForBeta(d.filterBeta)
+        binding.seekSensitivity.progress = progressForSensitivity(d.sensitivity)
         binding.switchGyro.isChecked = d.gyroCompensation
         binding.switchDistance.isChecked = d.distanceCompensation
         binding.switchCondition.isChecked = d.conditionCorrection
+        binding.switchDiag.isChecked = d.diagnosticLogging
         Toast.makeText(this, "已恢復預設值（按儲存才生效）", Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * 診斷摘要對話框：顯示最近一次紀錄的統計（無紀錄時說明如何開始記錄），
+     * 可複製全文傳給開發者、可清除全部紀錄。與閃退紀錄對話框同款式。
+     */
+    private fun showDiagSummary() {
+        val summary = GazeLog.summarize(this)
+        val body = summary
+            ?: "尚無診斷紀錄。\n\n打開「診斷紀錄」開關並按儲存，正常使用手機 1–2 分鐘（看看四個角落與中間），再回來看摘要。"
+        val textView = TextView(this).apply {
+            text = body
+            setTextIsSelectable(true)
+            textSize = 15f
+            setPadding(48, 32, 48, 32)
+        }
+        val scroll = ScrollView(this).apply { addView(textView) }
+        val builder = AlertDialog.Builder(this)
+            .setTitle("診斷摘要")
+            .setView(scroll)
+            .setNegativeButton("關閉", null)
+        if (summary != null) {
+            builder
+                .setPositiveButton("複製摘要") { _, _ ->
+                    val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    cm.setPrimaryClip(ClipData.newPlainText("診斷摘要", body))
+                    Toast.makeText(this, "已複製", Toast.LENGTH_SHORT).show()
+                }
+                .setNeutralButton("清除紀錄") { _, _ ->
+                    GazeLog.clearAll(this)
+                    Toast.makeText(this, "紀錄已清除", Toast.LENGTH_SHORT).show()
+                }
+        }
+        builder.show()
     }
 
     // 滑桿進度 ↔ 參數值的換算（範圍與 GazeSettings 一致）
@@ -287,6 +335,12 @@ class SettingsActivity : AppCompatActivity() {
     private fun betaFromProgress(p: Int) = 0.005 + p * 0.001
     private fun progressForBeta(v: Double) = ((v - 0.005) / 0.001).toInt()
 
+    private fun sensitivityFromProgress(p: Int) = 0.5f + p * 0.1f
+
+    // 0.1f 無法精確表示二進位，(v - 0.5f) / 0.1f 在 p=2/4/8/16 會算出 1.9999999；
+    // 用 toInt() 截斷會少一格，必須四捨五入（否則開設定頁按儲存會默默調低靈敏度）。
+    private fun progressForSensitivity(v: Float) = ((v - 0.5f) / 0.1f).roundToInt()
+
     companion object {
         private const val MAX_DWELL_PROGRESS = 42 // (2500 - 400) / 50
         private const val MAX_COOLDOWN_PROGRESS = 25 // (3000 - 500) / 100
@@ -296,5 +350,6 @@ class SettingsActivity : AppCompatActivity() {
         private const val MAX_THRESHOLD_PROGRESS = 16 // (0.20 - 0.04) / 0.01
         private const val MAX_CUTOFF_PROGRESS = 45 // (0.50 - 0.05) / 0.01
         private const val MAX_BETA_PROGRESS = 45 // (0.050 - 0.005) / 0.001
+        private const val MAX_SENSITIVITY_PROGRESS = 20 // (2.5 - 0.5) / 0.1
     }
 }

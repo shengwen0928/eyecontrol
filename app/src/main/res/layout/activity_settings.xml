@@ -225,6 +225,48 @@
                     android:text="調高游標移動比較快，調低比較不容易晃。"
                     android:textColor="@color/ec_text_secondary"
                     android:textSize="@dimen/ec_text_small" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="8dp"
+                    android:background="@color/ec_stone" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:labelFor="@id/seekSensitivity"
+                        android:text="游標靈敏度"
+                        android:textSize="@dimen/ec_text_body" />
+
+                    <TextView
+                        android:id="@+id/valSensitivity"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/ec_text_secondary"
+                        android:textSize="@dimen/ec_text_small" />
+                </LinearLayout>
+
+                <SeekBar
+                    android:id="@+id/seekSensitivity"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:contentDescription="游標靈敏度" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="調高眼球小幅移動就能到邊緣，調低游標比較穩。"
+                    android:textColor="@color/ec_text_secondary"
+                    android:textSize="@dimen/ec_text_small" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
@@ -647,6 +689,82 @@
                         android:layout_width="wrap_content"
                         android:layout_height="48dp"
                         android:contentDescription="陀螺儀角度修正" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/ec_stone" />
+
+                <LinearLayout
+                    android:id="@+id/rowDiag"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="診斷紀錄（暫時除錯用）"
+                            android:textSize="@dimen/ec_text_body" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="只記游標數字、不含影像、不上傳；最多記 2 分鐘自動停止。"
+                            android:textColor="@color/ec_text_secondary"
+                            android:textSize="@dimen/ec_text_small" />
+                    </LinearLayout>
+
+                    <Switch
+                        android:id="@+id/switchDiag"
+                        android:layout_width="wrap_content"
+                        android:layout_height="48dp"
+                        android:contentDescription="診斷紀錄" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/ec_stone" />
+
+                <LinearLayout
+                    android:id="@+id/rowDiagSummary"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="診斷摘要"
+                            android:textSize="@dimen/ec_text_body" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="查看最近一次紀錄的統計，複製後傳給開發者分析。"
+                            android:textColor="@color/ec_text_secondary"
+                            android:textSize="@dimen/ec_text_small" />
+                    </LinearLayout>
                 </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>

@@ -282,6 +282,15 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         if (sample == null) {
             // 偵測不到臉：游標留在原地變灰，讓使用者知道是「臉不見了」而不是當機
             cursor.setFaceLost()
+            // 診斷紀錄也要記臉遺失幀：邊緣看不到臉時，游標不動可能是追蹤丟失而非模型問題。
+            // 偏移記目前實際套用的值（與主路徑同一算法），免得摘要的平均偏移被 0 拉偏。
+            GazeLog.record(
+                this, settings.diagnosticLogging, face = false, features = null,
+                rawX = null, rawY = null, gainedX = null, gainedY = null,
+                curX = null, curY = null, sensitivity = settings.sensitivity,
+                offsetX = if (settings.conditionCorrection) appliedOffsetX else 0f,
+                offsetY = if (settings.conditionCorrection) appliedOffsetY else 0f,
+            )
             // 提醒顯示中也要推進狀態機（逾時／移開邏輯），否則臉遺失期間提醒永遠不消失
             if (reminderActive) {
                 updateReminder(null, null, null, null, SystemClock.elapsedRealtime())
@@ -351,6 +360,15 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         val correctedX = rawX + effOffsetX
         val correctedY = rawY + effOffsetY
 
+        // 靈敏度：預測偏移相對螢幕中心放大，濾波之前套用；1.0 = 不變。
+        // 模型輸出偏保守時，游標會聚在中間附近、眼球要移到底才到得了邊緣，
+        // 放大偏移讓小幅眼球移動就能覆蓋全螢幕。
+        val gain = settings.sensitivity.toDouble()
+        val centerX = screenW / 2.0
+        val centerY = screenH / 2.0
+        val gainedX = centerX + (correctedX - centerX) * gain
+        val gainedY = centerY + (correctedY - centerY) * gain
+
         // 臉轉向辨識（只記錄變化）：方向補償本身在模型裡以帶符號差值處理，這裡僅讓轉向可見
         val faceTurn = GazeFeatureExtractor.faceTurnDirection(sample.features, m.basePitch, m.baseYaw)
         if (faceTurn != lastFaceTurn) {
@@ -358,13 +376,22 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             Log.d(TAG, "臉轉向：$faceTurn")
         }
         val t = sample.timestampMs / 1000.0
-        val x = filterX.filter(correctedX, t).toFloat().coerceIn(0f, screenW - 1f)
-        val y = filterY.filter(correctedY, t).toFloat().coerceIn(0f, screenH - 1f)
+        val x = filterX.filter(gainedX, t).toFloat().coerceIn(0f, screenW - 1f)
+        val y = filterY.filter(gainedY, t).toFloat().coerceIn(0f, screenH - 1f)
 
         // 更新最後的有效位置
         lastCursorX = x
         lastCursorY = y
         hasValidCursor = true
+
+        // 診斷紀錄（開關關閉時此呼叫只負責關檔，不寫入）：記原始預測、放大後、
+        // 濾波後三段座標，才能分清是哪一段把移動吃掉或推偏。
+        GazeLog.record(
+            this, settings.diagnosticLogging, face = true, features = sample.features,
+            rawX = rawX, rawY = rawY, gainedX = gainedX, gainedY = gainedY,
+            curX = x, curY = y, sensitivity = settings.sensitivity,
+            offsetX = effOffsetX, offsetY = effOffsetY,
+        )
 
         // 條件變化評估（約每 0.5 秒一次）：變化大時查歷史內插，沒遇過才跳提醒
         if (now - lastConditionCheckAt >= CONDITION_CHECK_INTERVAL_MS) {
@@ -831,6 +858,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         }
         engine?.stop()
         engine = null
+        GazeLog.close()
         cursorView?.let {
             runCatching {
                 (getSystemService(Context.WINDOW_SERVICE) as WindowManager).removeView(it)
