@@ -3,6 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+import java.util.Base64
+
 // 固定 debug 簽名：CI 每次編譯都用同一支鑰匙簽名，之後 App 內更新才能直接覆蓋安裝，
 // 不必刪除重裝。鑰匙是公開的標準 debug 憑證（android/android），不是正式發行鑰匙，
 // 以 base64 文字檔形式放在 repo 裡（推送工具只收文字檔），編譯時在這裡解回 PKCS12 檔。
@@ -11,7 +13,7 @@ val debugKeystoreFile = file("debug.keystore")
 val debugKeystoreB64File = file("debug-keystore.b64")
 if (!debugKeystoreFile.exists() && debugKeystoreB64File.exists()) {
     debugKeystoreFile.writeBytes(
-        java.util.Base64.getMimeDecoder().decode(debugKeystoreB64File.readText())
+        Base64.getMimeDecoder().decode(debugKeystoreB64File.readText())
     )
 }
 
