@@ -143,9 +143,12 @@ object GazeLog {
         rows = 0
         // 關檔當下就把內容快照進記憶體再交給背景上傳：檔名可能被下一時段
         // 覆寫或被清檔刪掉，上傳執行緒事後再讀檔會讀到錯的內容。
-        val csvText = if (doUpload) runCatching { file.readText() }.getOrNull() else null
-        if (csvText != null) {
-            uploadExecutor.submit { uploadFile(csvText, file.nameWithoutExtension, rowCount) }
+        // （doUpload 為 true 只代表 file 曾非空，編譯器無法由此推斷非空，須顯式判空。）
+        val targetFile = file
+        val csvText =
+            if (doUpload && targetFile != null) runCatching { targetFile.readText() }.getOrNull() else null
+        if (csvText != null && targetFile != null) {
+            uploadExecutor.submit { uploadFile(csvText, targetFile.nameWithoutExtension, rowCount) }
         }
     }
 
