@@ -96,6 +96,20 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
     private var hoverBtnIndex = -1
     private var hoverStart = 0L
 
+    // 控制面板收合狀態：平時只留右緣小把手，注視把手才展開整列；
+    // 選完模式或閒置數秒自動收回，暫停模式下保持展開（要看得到「重啟」）。
+    private var panelExpanded = false
+    private var handleHoverStart = 0L
+    private var panelCollapseAt = 0L
+    private var lastPanelHoverAt = 0L
+
+    /**
+     * 面板按鈕是否已武裝：選完一個模式後，視線必須先離開面板區一次，
+     * 下次注視同一鍵才會重新累積。否則選了「暫停」後視線還停在原地，
+     * 滿一個 dwell 就會立刻「重啟」，暫停黏不住。
+     */
+    private var panelButtonArmed = true
+
     // 凝視停留狀態
     private var anchorX = 0f
     private var anchorY = 0f
@@ -255,6 +269,20 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         lp.gravity = Gravity.END or Gravity.CENTER_VERTICAL
         wm.addView(view, lp)
         controlView = view
+        // 預設收合：只留右緣小把手，注視把手才展開整列面板。
+        view.setCollapsed(true)
+    }
+
+    /** 展開／收起模式面板，並同步 view 的繪製狀態與注視暫存。 */
+    private fun setPanelExpanded(expanded: Boolean) {
+        panelExpanded = expanded
+        panelCollapseAt = 0L
+        hoverBtnIndex = -1
+        handleHoverStart = 0L
+        handleArmed = false
+        lastPanelHoverAt = SystemClock.elapsedRealtime()
+        controlView?.setCollapsed(!expanded)
+        controlView?.setHover(-1, 0f)
     }
 
     // 上一幀的停留進度
@@ -282,6 +310,13 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         if (sample == null) {
             // 偵測不到臉：游標留在原地變灰，讓使用者知道是「臉不見了」而不是當機
             cursor.setFaceLost()
+            // 把手與面板的注視進度一併清掉：臉遺失可能持續數秒，殘留的
+            // 起始時間會讓恢復後的第一幀直接展開面板或誤觸按鈕。
+            handleHoverStart = 0L
+            controlView?.setHandleProgress(0f)
+            hoverBtnIndex = -1
+            hoverStart = 0L
+            controlView?.setHover(-1, 0f)
             // 診斷紀錄也要記臉遺失幀：邊緣看不到臉時，游標不動可能是追蹤丟失而非模型問題。
             // 偏移記目前實際套用的值（與主路徑同一算法），免得摘要的平均偏移被 0 拉偏。
             GazeLog.record(
@@ -420,16 +455,53 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
 
         var progress = 0f
 
-        // 控制面板區域檢測 (寬 180 像素，高 700 像素，靠右置中)
+        // 控制面板：展開時是 180×700 整列；收合時只剩右緣把手判定區，
+        // 其餘右緣恢復成一般螢幕（凝視點擊與右緣下滑手勢都回來了）。
         val panelWidth = 180f
         val panelHeight = 700f
         val panelLeft = screenW - panelWidth
         val panelTop = (screenH - panelHeight) / 2f
         val panelBottom = panelTop + panelHeight
 
-        val inPanel = x >= panelLeft && y >= panelTop && y <= panelBottom
+        val handleLeft = screenW - ControlPanelView.HANDLE_HIT_WIDTH
+        val handleTop = (screenH - ControlPanelView.HANDLE_HIT_HEIGHT) / 2f
+        val handleBottom = handleTop + ControlPanelView.HANDLE_HIT_HEIGHT
+        val gazeInHandleZone = x >= handleLeft && y >= handleTop && y <= handleBottom
+        val inHandleZone = !panelExpanded && gazeInHandleZone
+        val inPanel = panelExpanded && x >= panelLeft && y >= panelTop && y <= panelBottom
 
-        if (inPanel) {
+        // 自動收回：選完模式 1.2 秒後，或展開後閒置 4 秒且視線不在面板上；
+        // 暫停模式不自動收（要看得到「重啟」）。收回的這一幀走一般螢幕邏輯，
+        // 避免沿用展開態的面板命中判定多跑一次。
+        var panelJustCollapsed = false
+        if (panelExpanded && currentMode != ActionMode.PAUSED) {
+            if ((panelCollapseAt != 0L && now >= panelCollapseAt) ||
+                (!inPanel && now - lastPanelHoverAt > PANEL_AUTO_COLLAPSE_MS)
+            ) {
+                setPanelExpanded(false)
+                panelJustCollapsed = true
+            }
+        }
+
+        if (!panelJustCollapsed && inHandleZone) {
+            // 注視把手展開面板：同一套 dwell 節奏，視線離開就重算。
+            // 未武裝或冷卻期間不累積進度，但同樣不觸發螢幕點擊——
+            // 把手區是面板的地盤，視線停在這裡不該點到下層 App。
+            if (handleArmed && now >= cooldownUntil) {
+                if (handleHoverStart == 0L) handleHoverStart = now
+                val hp = min((now - handleHoverStart) / settings.dwellTimeMs.toFloat(), 1f)
+                controlView?.setHandleProgress(hp)
+                if (hp >= 1f) {
+                    setPanelExpanded(true)
+                    cooldownUntil = now + settings.cooldownMs
+                }
+            } else {
+                handleHoverStart = 0L
+                controlView?.setHandleProgress(0f)
+            }
+            // 在把手上時，不累積螢幕點擊的 dwell 進度
+            anchorX = x; anchorY = y; dwellStart = now
+        } else if (!panelJustCollapsed && inPanel) {
             val relativeY = y - panelTop
             val btnHeight = panelHeight / 5f
             val btnIndex = (relativeY / btnHeight).toInt().coerceIn(0, 4)
@@ -437,11 +509,18 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             // 如果是暫停狀態，只有注視最後一個按鈕（重啟）才有反應
             if (currentMode == ActionMode.PAUSED && btnIndex != 4) {
                 controlView?.setHover(-1, 0f)
+            } else if (!panelButtonArmed || now < cooldownUntil) {
+                // 選完模式後視線還停在同一鍵上、或仍在冷卻期間：不累積，
+                // hoverStart 每幀重置，避免冷卻一過立刻誤觸（例如暫停後
+                // 立刻重啟）。要觸發，視線須先離開面板區再回來。
+                hoverStart = now
+                controlView?.setHover(-1, 0f)
             } else {
                 if (btnIndex != hoverBtnIndex) {
                     hoverBtnIndex = btnIndex
                     hoverStart = now
                 }
+                lastPanelHoverAt = now
                 val hp = min((now - hoverStart) / settings.dwellTimeMs.toFloat(), 1f)
                 controlView?.setHover(btnIndex, hp)
                 if (hp >= 1f) {
@@ -460,19 +539,38 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
                         controlView?.activeMode = currentMode
                         controlView?.invalidate()
                     }
+                    // 切到暫停保持展開（要看得到「重啟」）；選了其他模式則短暫
+                    // 顯示選中態後自動收回。
+                    if (currentMode != ActionMode.PAUSED) {
+                        panelCollapseAt = now + PANEL_COLLAPSE_AFTER_SELECT_MS
+                    }
                     cooldownUntil = now + settings.cooldownMs
                     hoverBtnIndex = -1
                     hoverStart = now
+                    // 解除武裝：視線離開面板區一次後才重新累積，避免停在
+                    // 同一鍵上立刻重複觸發。
+                    panelButtonArmed = false
                 }
             }
             // 在面板上時，不累積螢幕點擊的 dwell 進度
             anchorX = x; anchorY = y; dwellStart = now
         } else {
-            // 不在面板上，清除面板 hover 狀態
+            // 不在面板／把手上，清除面板與把手的 hover 狀態
             if (hoverBtnIndex != -1) {
                 hoverBtnIndex = -1
                 controlView?.setHover(-1, 0f)
             }
+            if (handleHoverStart != 0L) {
+                handleHoverStart = 0L
+                controlView?.setHandleProgress(0f)
+            }
+            // 視線確實離開把手區：把手重新武裝，下次注視才能展開。
+            // 收回當幀視線可能還停在把手區（選完模式），那時不武裝，
+            // 否則會立刻又展開。
+            if (!panelExpanded && !gazeInHandleZone) handleArmed = true
+            // 視線確實離開面板區：面板按鈕重新武裝，下次注視同一鍵才累積。
+            val gazeInPanelRect = x >= panelLeft && y >= panelTop && y <= panelBottom
+            if (!gazeInPanelRect) panelButtonArmed = true
 
             // 如果目前是暫停狀態，游標不累積點擊，且不顯示游標（或者顯示半透明灰色）
             if (currentMode == ActionMode.PAUSED) {
@@ -598,9 +696,11 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         reminderLastFrameAt = now
         reminderAwaySince = 0L
         reminderRawPoints.clear()
-        // 清掉面板 hover、待滑動起點與 dwell 進度，避免提醒期間誤觸
+        // 清掉面板 hover、把手進度、待滑動起點與 dwell 進度，避免提醒期間誤觸
         hoverBtnIndex = -1
         controlView?.setHover(-1, 0f)
+        handleHoverStart = 0L
+        controlView?.setHandleProgress(0f)
         swipeStartPoint = null
         controlView?.swipeState = 0
         controlView?.invalidate()
@@ -925,8 +1025,10 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             val svc = instance ?: return
             svc.mainHandler.post {
                 svc.pausedForCalibration = false
-                // 把暫停期間藏起來的模式面板恢復顯示。
+                // 把暫停期間藏起來的模式面板恢復顯示：暫停中保持展開，
+                // 否則「重啟」看不見；其餘狀態回到預設的收合。
                 svc.controlView?.visibility = View.VISIBLE
+                svc.setPanelExpanded(svc.currentMode == ActionMode.PAUSED)
                 svc.startEngine()
             }
         }
@@ -982,6 +1084,8 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
                 svc.currentMode = ActionMode.PAUSED
                 svc.controlView?.activeMode = ActionMode.PAUSED
                 svc.controlView?.invalidate()
+                // 暫停時把面板展開，否則「重啟」鍵藏在把手後面看不到。
+                svc.setPanelExpanded(true)
                 svc.cursorView?.setCursor(null)
             }
         }
@@ -995,6 +1099,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
                     svc.currentMode = ActionMode.TAP
                     svc.controlView?.activeMode = ActionMode.TAP
                     svc.controlView?.invalidate()
+                    svc.setPanelExpanded(false)
                 }
                 if (svc.engine == null) svc.startEngine()
             }
@@ -1038,6 +1143,10 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         private const val REMINDER_DWELL_RADIUS_PX = 200f
         private const val REMINDER_SKIP_COOLDOWN_MS = 60_000L
         private const val REMINDER_MIN_SAMPLES = 5
+        // 模式面板自動收合：選完模式後顯示選中態 1.2 秒再收回；
+        // 展開後閒置 4 秒且視線不在面板上也收回（暫停模式除外）。
+        private const val PANEL_COLLAPSE_AFTER_SELECT_MS = 1200L
+        private const val PANEL_AUTO_COLLAPSE_MS = 4000L
         // 行為參數（停留時間、冷卻、眨眼、平滑）統一由 GazeSettings 提供，此處不再寫死。
     }
 }
