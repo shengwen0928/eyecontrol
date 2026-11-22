@@ -21,7 +21,7 @@
         android:layout_width="match_parent"
         android:layout_height="8dp"
         android:layout_marginTop="8dp"
-        android:max="5"
+        android:max="6"
         android:progress="1"
         android:progressTint="@color/ec_sage_deep" />
 

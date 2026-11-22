@@ -122,7 +122,7 @@ class MainActivity : AppCompatActivity() {
             // 無障礙服務只能由使用者在系統設定中手動開啟（與引導第 2 步一致：
             // 未校正也可以先開服務，校正之後再做）。
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            Toast.makeText(this, "請在清單中找到「眼控 EyeControl」並開啟", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "請在清單中找到「凝視」並開啟", Toast.LENGTH_LONG).show()
         }
         binding.btnSettings.setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
@@ -187,7 +187,7 @@ class MainActivity : AppCompatActivity() {
             refreshStatus()
         }
 
-        binding.footerText.text = "EyeControl ${BuildConfig.VERSION_NAME}"
+        binding.footerText.text = "凝視 ${BuildConfig.VERSION_NAME}"
 
         ContextCompat.registerReceiver(
             this, downloadReceiver,
@@ -224,6 +224,8 @@ class MainActivity : AppCompatActivity() {
 
     /** 操作是經 mainHandler 非同步生效的，短暫延遲後再刷一次狀態才準。 */
     private fun checkForUpdate() {
+        // Play 商店版：更新走 Play 商店，App 內不查 GitHub（Play 政策禁止自行下載 APK 更新）。
+        if (!BuildConfig.SELF_UPDATE_ENABLED) return
         UpdateChecker.checkForUpdate(this) { info ->
             AlertDialog.Builder(this)
                 .setTitle("有新版本 ${info.versionTag}")

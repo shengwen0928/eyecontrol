@@ -3,19 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>EyeControl 眼控 — 隱私權政策</title>
+<title>凝視 — 隱私權政策</title>
 <style>
   body{font-family:"Microsoft JhengHei","PingFang TC",sans-serif;max-width:720px;
        margin:40px auto;padding:0 20px;line-height:1.8;color:#222;}
-  h1{font-size:1.6em;} h2{font-size:1.15em;margin-top:1.8em;border-left:4px solid #4a7dbd;padding-left:10px;}
+  h1{font-size:1.6em;} h2{font-size:1.15em;margin-top:1.8em;border-left:4px solid #819B89;padding-left:10px;}
   .meta{color:#777;font-size:.9em;}
 </style>
 </head>
 <body>
-<h1>EyeControl 眼控 — 隱私權政策</h1>
+<h1>凝視 — 隱私權政策</h1>
 <p class="meta">生效日期：2026 年 11 月 22 日｜開發者：Zhu（個人開發者）</p>
 
-<p>EyeControl 眼控（下稱「本應用程式」）是一款無障礙輔助工具，
+<p>凝視（下稱「本應用程式」）是一款無障礙輔助工具，
 讓使用者以視線移動游標、以凝視停留或眨眼觸發點擊，藉此操作 Android 裝置。
 我們深知視覺資料的敏感性，本政策說明本應用程式如何處理您的資訊。</p>
 
@@ -26,9 +26,13 @@
   <li>臉部特徵、虹膜或任何生物特徵原始資料</li>
   <li>身分資訊、聯絡資訊、位置資訊、使用行為分析</li>
 </ul>
-<p>本應用程式<strong>不包含任何第三方追蹤或廣告 SDK</strong>。唯一的網路連線是「更新檢查」：
-App 啟動時向 <code>api.github.com</code> 查詢最新 release 版本，只讀取公開的版本資訊，
-不傳送任何個人資料；除此之外不連接網際網路。</p>
+<p>本應用程式<strong>不包含任何第三方追蹤或廣告 SDK</strong>。網路連線依發行通路而不同，
+兩者皆不傳送任何個人資料：</p>
+<ul>
+  <li><strong>Play 商店版</strong>：平時不連接網際網路；更新一律透過 Google Play 商店。</li>
+  <li><strong>GitHub 側載版</strong>：唯一的網路連線是「更新檢查」——App 啟動時向
+      <code>api.github.com</code> 查詢最新 release 版本，只讀取公開的版本資訊。</li>
+</ul>
 
 <h2>二、儲存在您裝置上的資料</h2>
 <p>視線校正完成後，僅有校正模型的<strong>數學權重數值</strong>（嶺回歸係數，不含任何影像或
@@ -43,15 +47,23 @@ App 啟動時向 <code>api.github.com</code> 查詢最新 release 版本，只�
       本服務<strong>不讀取、不記錄</strong>畫面內容或您在其他應用程式中的任何資訊，
       僅用於注入您主動觸發的操作手勢。</li>
   <li><strong>前台服務（FOREGROUND_SERVICE_CAMERA）</strong>：確保眼控服務在使用期間持續運作，不被系統中斷。</li>
+  <li><strong>安裝未知來源應用程式（REQUEST_INSTALL_PACKAGES，僅 GitHub 側載版）</strong>：
+      讓 App 內更新檢查下載新版後，能跳轉系統安裝畫面完成覆蓋安裝。Play 商店版不使用此權限。</li>
 </ul>
 
-<h2>四、兒童隱私</h2>
+<h2>四、關於側載安裝警告</h2>
+<p>從 GitHub 下載安裝時，Google Play 安全防護可能跳出「此應用程式可能有害」的警告。
+這是因為本應用程式未經 Play 商店發行、且無障礙服務與相機權限的組合符合其啟發式判斷；
+本應用程式不含惡意程式，原始碼完全公開，可自行檢視。安裝時點「瞭解詳情」→「仍要安裝」即可。
+Play 商店版不受此影響。</p>
+
+<h2>五、兒童隱私</h2>
 <p>本應用程式不針對兒童設計，且因不收集任何資料，不涉及兒童個人資料之處理。</p>
 
-<h2>五、政策變更</h2>
+<h2>六、政策變更</h2>
 <p>若本政策有所變更，將於本頁面更新並調整生效日期。重大變更將於應用程式更新說明中告知。</p>
 
-<h2>六、聯絡方式</h2>
+<h2>七、聯絡方式</h2>
 <p>對本政策有任何疑問，請聯絡開發者：<a href="mailto:shengwen@aiw.com.tw">shengwen@aiw.com.tw</a></p>
 
 <hr>

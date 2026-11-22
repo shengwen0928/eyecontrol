@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.provider.Settings
+import android.view.View
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
@@ -109,7 +110,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         binding.rowA11ySettings.setOnClickListener {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            Toast.makeText(this, "請在清單中找到「眼控 EyeControl」", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "請在清單中找到「凝視」", Toast.LENGTH_LONG).show()
         }
 
         // 無障礙：系統顯示與字體大小設定。
@@ -120,13 +121,19 @@ class SettingsActivity : AppCompatActivity() {
                 }
         }
 
-        // 隱私：如實說明（更新檢查會連線 api.github.com 查詢 releases）。
+        // 隱私：如實說明。Play 商店版沒有更新檢查、不連網；側載版的更新檢查
+        // 會連線 api.github.com 查詢 releases，兩個版本說法分開，不可混寫。
         binding.rowPrivacy.setOnClickListener {
+            val updateText = if (BuildConfig.SELF_UPDATE_ENABLED) {
+                "唯一會連網的功能是「更新檢查」：App 啟動時向 api.github.com 查詢最新 release 版本，不傳送任何個人資料。"
+            } else {
+                "Play 商店版沒有「更新檢查」連線：更新一律走 Play 商店，本 App 平時不連網。"
+            }
             AlertDialog.Builder(this)
                 .setTitle("隱私說明")
                 .setMessage(
                     "影像只在手機上即時處理，不儲存、不上傳；校正資料只有數學權重數值，存在手機本機。\n\n" +
-                        "唯一會連網的功能是「更新檢查」：App 啟動時向 api.github.com 查詢最新 release 版本，不傳送任何個人資料。",
+                        updateText,
                 )
                 .setPositiveButton("知道了", null)
                 .show()
@@ -135,14 +142,22 @@ class SettingsActivity : AppCompatActivity() {
         // 系統資訊：關於。
         binding.rowAbout.setOnClickListener {
             AlertDialog.Builder(this)
-                .setTitle("關於 EyeControl")
+                .setTitle("關於凝視")
                 .setMessage(
                     "讓視線，成為自由操作的力量。\n\n" +
-                        "EyeControl 是開源的 Android 無障礙工具，用眼睛移動游標、凝視停留或眨眼來操作手機，給無法用手操作的人。\n\n" +
+                        "凝視是開源的 Android 無障礙工具，用眼睛移動游標、凝視停留或眨眼來操作手機，給無法用手操作的人。\n\n" +
                         "授權：MIT License。原始碼公開於 GitHub（shengwen0928/eyecontrol）。",
                 )
                 .setPositiveButton("知道了", null)
                 .show()
+        }
+
+        // 系統資訊：Play 商店版才顯示「到 Play 商店檢查更新」列
+        //（側載版走 App 內更新檢查，不顯示此列）。
+        binding.rowStoreUpdate.visibility =
+            if (BuildConfig.SELF_UPDATE_ENABLED) View.GONE else View.VISIBLE
+        binding.rowStoreUpdate.setOnClickListener {
+            UpdateChecker.openStoreListing(this)
         }
 
         binding.btnSave.setOnClickListener { saveAndFinish() }

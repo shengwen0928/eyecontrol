@@ -1198,11 +1198,11 @@
                     android:background="@color/ec_stone" />
 
                 <LinearLayout
-                    android:id="@+id/rowAbout"
+                    android:id="@+id/rowStoreUpdate"
                     android:layout_width="match_parent"
                     android:layout_height="56dp"
                     android:clickable="true"
-                    android:contentDescription="關於 EyeControl"
+                    android:contentDescription="到 Play 商店檢查更新"
                     android:focusable="true"
                     android:gravity="center_vertical"
                     android:orientation="horizontal">
@@ -1216,7 +1216,50 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="關於 EyeControl"
+                            android:text="到 Play 商店檢查更新"
+                            android:textSize="@dimen/ec_text_body" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Play 商店版的更新在商店裡查看。"
+                            android:textColor="@color/ec_text_secondary"
+                            android:textSize="@dimen/ec_text_small" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="›"
+                        android:textColor="@color/ec_text_muted"
+                        android:textSize="@dimen/ec_text_section" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/ec_stone" />
+
+                <LinearLayout
+                    android:id="@+id/rowAbout"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:clickable="true"
+                    android:contentDescription="關於凝視"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="關於凝視"
                             android:textSize="@dimen/ec_text_body" />
 
                         <TextView

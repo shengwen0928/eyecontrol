@@ -23,7 +23,7 @@
                 android:layout_width="56dp"
                 android:layout_height="56dp"
                 android:layout_gravity="center"
-                android:contentDescription="EyeControl 標誌"
+                android:contentDescription="凝視標誌"
                 android:src="@drawable/ic_eye_mark" />
         </FrameLayout>
 
@@ -32,7 +32,7 @@
             android:layout_height="wrap_content"
             android:layout_gravity="center_horizontal"
             android:layout_marginTop="16dp"
-            android:text="EyeControl"
+            android:text="凝視"
             android:textSize="28sp"
             android:textStyle="bold" />
 

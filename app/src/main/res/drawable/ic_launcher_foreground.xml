@@ -1,0 +1,23 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 眼形：外層深鼠尾草綠杏仁眼，內襯暖白，鼠尾草綠虹膜、深石墨瞳孔、一點白光。
+         全部圖形收在 66dp 安全區內，圓形／圓角遮罩下不會被裁到。 -->
+    <path
+        android:fillColor="#526F5C"
+        android:pathData="M22,54 C38,32 70,32 86,54 C70,76 38,76 22,54 Z" />
+    <path
+        android:fillColor="#F7F6F2"
+        android:pathData="M30,54 C42,40 66,40 78,54 C66,68 42,68 30,54 Z" />
+    <path
+        android:fillColor="#819B89"
+        android:pathData="M54,41 m-13,0 a13,13 0,1 1,26 0 a13,13 0,1 1,-26 0" />
+    <path
+        android:fillColor="#202522"
+        android:pathData="M54,48 m-6,0 a6,6 0,1 1,12 0 a6,6 0,1 1,-12 0" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M59,46.2 m-2.8,0 a2.8,2.8 0,1 1,5.6 0 a2.8,2.8 0,1 1,-5.6 0" />
+</vector>

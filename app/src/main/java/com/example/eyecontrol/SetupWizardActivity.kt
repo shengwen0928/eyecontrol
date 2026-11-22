@@ -13,18 +13,20 @@ import androidx.core.content.ContextCompat
 import com.example.eyecontrol.databinding.ActivitySetupWizardBinding
 
 /**
- * 設定引導：只做能完整接線的 5 步。
+ * 設定引導：只做能完整接線的 6 步。
  *
- * 0 歡迎 → 1 相機權限（真實權限請求＋重試）→ 2 無障礙服務（檢查狀態、跳系統設定、
- * 返回時重查）→ 3 眼球校正（啟動現有 CalibrationActivity，交接協議由校正頁內部處理；
- * 返回時重查 CalibrationStore）→ 4 完成。
+ * 0 歡迎 → 1 使用前須知（聲明：影像本機處理、服務用途、更新方式與 Play 安全防護
+ * 警告說明；純告知，看完按鈕繼續）→ 2 相機權限（真實權限請求＋重試）→
+ * 3 無障礙服務（檢查狀態、跳系統設定、返回時重查）→ 4 眼球校正（啟動現有
+ * CalibrationActivity，交接協議由校正頁內部處理；返回時重查 CalibrationStore）→
+ * 5 完成。
  *
  * 距離／環境確認、眼睛辨識測試、操作練習三步本批不做：沒有對應的真實檢測流程，
  * 做畫面就是假畫面，留待後續批次。
  *
- * 防困住設計：第 2／3 步若使用者已去過系統設定／校正頁、回來仍未完成，
+ * 防困住設計：第 3／4 步若使用者已去過系統設定／校正頁、回來仍未完成，
  * 出現「先跳過，之後再做」——狀態卡如實顯示未完成，主畫面會再次提醒，
- * 絕不把「跳過」寫成「已完成」。第 1 步（相機）若被永久拒絕（系統不再彈詢問框），
+ * 絕不把「跳過」寫成「已完成」。第 2 步（相機）若被永久拒絕（系統不再彈詢問框），
  * 同樣出現跳過與去系統設定的出口，跳過不寫成已完成。
  */
 class SetupWizardActivity : AppCompatActivity() {
@@ -88,7 +90,8 @@ class SetupWizardActivity : AppCompatActivity() {
 
     private fun onPrimary() {
         when (currentStep) {
-            STEP_WELCOME -> goToStep(STEP_CAMERA)
+            STEP_WELCOME -> goToStep(STEP_NOTICE)
+            STEP_NOTICE -> goToStep(STEP_CAMERA)
             STEP_CAMERA -> {
                 if (hasCameraPermission()) {
                     goToStep(STEP_SERVICE)
@@ -106,7 +109,7 @@ class SetupWizardActivity : AppCompatActivity() {
                 } else {
                     returnedFromSettings = true
                     startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                    Toast.makeText(this, "請在清單中找到「眼控 EyeControl」並開啟", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, "請在清單中找到「凝視」並開啟", Toast.LENGTH_LONG).show()
                 }
             }
             STEP_CALIBRATION -> {
@@ -146,18 +149,27 @@ class SetupWizardActivity : AppCompatActivity() {
     }
 
     private fun refreshStep() {
-        binding.wizardStepLabel.text = "第 ${currentStep + 1} 步，共 5 步"
+        binding.wizardStepLabel.text = "第 ${currentStep + 1} 步，共 6 步"
         binding.wizardProgress.progress = currentStep + 1
         binding.btnWizardBack.visibility = if (currentStep == STEP_WELCOME) View.GONE else View.VISIBLE
         binding.btnWizardSkip.visibility = View.GONE
 
         when (currentStep) {
             STEP_WELCOME -> {
-                binding.wizardTitle.text = "歡迎使用 EyeControl"
+                binding.wizardTitle.text = "歡迎使用凝視"
                 binding.wizardDesc.text =
-                    "接下來三步，幫你把眼控設定好。不用趕，每一步都可以返回、可以重來。"
+                    "接下來幾步，幫你把眼控設定好。不用趕，每一步都可以返回、可以重來。"
                 setStatus(null)
                 binding.btnWizardPrimary.text = "開始設定"
+            }
+            STEP_NOTICE -> {
+                binding.wizardTitle.text = "先說清楚三件事"
+                binding.wizardDesc.text =
+                    "一、影像只在手機上即時處理，不存照片、不上傳。\n\n" +
+                        "二、眼控服務代替手指點按螢幕，不讀取、不記錄其他 App 的內容。\n\n" +
+                        "三、更新方式：Play 商店版在 Play 商店更新；從 GitHub 下載的版本在 App 內檢查更新。從 GitHub 安裝時，Play 安全防護跳出警告是預期的，點「仍要安裝」即可。"
+                setStatus(null)
+                binding.btnWizardPrimary.text = "我知道了，繼續"
             }
             STEP_CAMERA -> {
                 binding.wizardTitle.text = "允許使用相機"
@@ -168,7 +180,7 @@ class SetupWizardActivity : AppCompatActivity() {
                     binding.btnWizardPrimary.text = "下一步"
                 } else if (isCameraPermanentlyDenied()) {
                     // 永久拒絕：系統詢問框不會再出現，必須去系統設定手動開啟。
-                    // 比照第 2／3 步出現跳過出口，跳過不寫成已完成。
+                    // 比照第 3／4 步出現跳過出口，跳過不寫成已完成。
                     setStatus(
                         "相機權限被拒絕，且系統不會再跳出詢問。\n" +
                             "沒有相機權限就無法追蹤眼球。請到系統設定開啟，或先跳過、之後再做。",
@@ -274,10 +286,11 @@ class SetupWizardActivity : AppCompatActivity() {
 
     companion object {
         private const val STEP_WELCOME = 0
-        private const val STEP_CAMERA = 1
-        private const val STEP_SERVICE = 2
-        private const val STEP_CALIBRATION = 3
-        private const val STEP_DONE = 4
+        private const val STEP_NOTICE = 1
+        private const val STEP_CAMERA = 2
+        private const val STEP_SERVICE = 3
+        private const val STEP_CALIBRATION = 4
+        private const val STEP_DONE = 5
 
         private const val KEY_STEP = "wizard_step"
         private const val KEY_FROM_SETTINGS = "wizard_from_settings"

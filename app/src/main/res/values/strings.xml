@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">眼控 EyeControl</string>
-    <string name="accessibility_desc">以視線移動游標，凝視停留即可點擊。啟用後 App 會使用前鏡頭追蹤你的眼睛，並在螢幕上顯示游標。</string>
+    <string name="app_name">凝視</string>
+    <string name="accessibility_desc">凝視用視線操作手機：以前鏡頭追蹤眼睛移動游標，凝視停留或眨眼即可點擊。影像只在本機即時處理，不儲存、不上傳；本服務只用來代替手指操作，不讀取、不記錄其他應用程式的內容。</string>
 </resources>

@@ -15,9 +15,13 @@ import org.json.JSONObject
 import kotlin.concurrent.thread
 
 /**
- * App 內更新檢查：開 App 時問 GitHub 最新 release，有新版就讓使用者一鍵下載，
+ * App 內更新檢查（僅側載版）：開 App 時問 GitHub 最新 release，有新版就讓使用者一鍵下載，
  * 下載完直接跳安裝畫面。側載 App 不能完全靜默更新，安裝那一下一定要使用者親自點；
  * 但不用再開瀏覽器找連結、不用手動下載。檢查失敗（沒網路、API 限流）就靜靜不打擾。
+ *
+ * Play 商店版不走這條路：Play 政策禁止商店版 App 自行下載 APK 更新，MainActivity
+ * 以 BuildConfig.SELF_UPDATE_ENABLED 把檢查關掉，更新一律走 Play 商店
+ *（見 openStoreListing）。
  */
 object UpdateChecker {
 
@@ -80,6 +84,20 @@ object UpdateChecker {
 
     private fun parseVersion(v: String): List<Int> =
         v.trim().removePrefix("v").split(".", "-", "+").mapNotNull { it.toIntOrNull() }
+
+    /** 開啟 Play 商店的本 App 頁面（Play 版更新入口）。先試 market:// 直達 Play App，失敗時退回網頁版。 */
+    fun openStoreListing(activity: Activity) {
+        val market = Intent(
+            Intent.ACTION_VIEW,
+            Uri.parse("market://details?id=${activity.packageName}"),
+        )
+        val web = Intent(
+            Intent.ACTION_VIEW,
+            Uri.parse("https://play.google.com/store/apps/details?id=${activity.packageName}"),
+        )
+        runCatching { activity.startActivity(market) }
+            .onFailure { activity.startActivity(web) }
+    }
 
     /** 用 DownloadManager 下載 APK；回傳 download id，下載完成時由呼叫端接手安裝。 */
     fun startDownload(context: Context, info: UpdateInfo): Long {

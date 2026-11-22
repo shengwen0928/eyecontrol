@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Play 商店版專用 manifest 疊加層：Play 政策禁止商店版 App 自行下載 APK 更新，
+     因此 Play 版不宣告 INTERNET 與 REQUEST_INSTALL_PACKAGES；更新一律走 Play 商店，
+     程式內的 GitHub 更新檢查以 BuildConfig.SELF_UPDATE_ENABLED 關閉。 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission
+        android:name="android.permission.INTERNET"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.REQUEST_INSTALL_PACKAGES"
+        tools:node="remove" />
+
+</manifest>

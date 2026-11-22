@@ -1,7 +1,17 @@
-# EyeControl 眼控
+# 凝視
 
 用手機前鏡頭追蹤眼球，以視線移動游標、凝視停留或眨眼點擊，直接控制整支
 Android 手機的開源無障礙原型系統。所有影像處理都在裝置端即時完成，不上傳。
+
+## 安裝
+
+- **Google Play 商店**：上架作業進行中，上架後連結貼在這裡。商店版更新走 Play 商店，安裝時不會跳安全防護警告。
+- **GitHub 側載**：到 [Releases](../../releases) 下載最新版 `eyecontrol-debug.apk` 直接安裝。第一次安裝時，Android 會要求允許「安裝未知來源應用程式」一次；Google Play 安全防護可能跳出「此應用程式可能有害」的警告——這是側載 App 加上無障礙服務與相機權限的預期判斷，不是真的偵測到惡意程式，點「瞭解詳情」→「仍要安裝」即可。無障礙服務啟用前，另須在「設定 → 應用程式 → 凝視 → ⋮ → 允許受限制的設定」放行（Android 對側載 App 的限制）。
+
+簽名：側載版用固定的公開 debug 鑰匙簽名（`app/debug-keystore.b64`，編譯時解回
+`debug.keystore`；標準 debug 憑證，不是正式發行鑰匙），同通路更新可直接覆蓋安裝、
+校正資料保留；Play 商店版用獨立的 release 鑰匙簽名（鑰匙不進公開 repo）。兩個通路
+簽名不同，互換通路安裝時須先刪除舊版再安裝。
 
 > 開發狀態：研究原型，持續開發中。功能持續深化，部分新功能尚未在實機上驗證，
 > 詳見[已知限制](#已知限制)。
@@ -122,7 +132,7 @@ Android 手機的開源無障礙原型系統。所有影像處理都在裝置端
 1. 安裝 APK，開啟 App
 2. 按「授予相機權限」
 3. 先選使用情境（坐著／躺著／平放），再按「開始眼球校正」——手機立在面前約 30–40 cm，**頭保持不動**，只用眼睛依序看 9 個點；每個情境各做一次
-4. 按「開啟無障礙服務」→ 系統設定中啟用「眼控 EyeControl」
+4. 按「開啟無障礙服務」→ 系統設定中啟用「凝視」
 5. 藍色游標隨視線移動：凝視同一處達到設定的停留時間（預設 1 秒）即點擊，或刻意眨眼點擊；注視右側面板切換模式；參數可在主畫面的「參數設定」調整
 
 更新：開 App 時會自動檢查 GitHub 最新 release，有新版就跳提示，點「下載更新」即可；第一次需在系統設定允許本 App「安裝未知來源應用程式」一次，安裝當下仍需親自點一下確認（Android 對側載 App 的限制，無法完全靜默更新）。
@@ -141,6 +151,12 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 `debug.keystore`；標準 debug 憑證 android/android，不是正式發行鑰匙），目的是讓每台 CI
 編譯出的 APK 簽名一致，更新時可直接覆蓋安裝、不必刪除重裝。換固定簽名前的舊版
 （v0.5.0 之前）簽名每次編譯都不同，升級到 v0.5.1 需先刪除舊版再安裝一次，之後即可覆蓋更新。
+
+發行通路有兩個 flavor：`sideload`（GitHub 側載，App 內查 GitHub 更新）與 `play`
+（Play 商店版，不查 GitHub、不宣告 INTERNET／REQUEST_INSTALL_PACKAGES）。CI 同時編
+`assembleSideloadDebug` 與 `bundlePlayRelease`；Play 版 release 簽名鑰匙不進 repo，
+由 `EYE_RELEASE_KEYSTORE_FILE` 等環境變數傳入（見 CI 設定），本機編 Play 版時把鑰匙檔
+放 `app/release.keystore` 即可。
 
 ## 已知限制（原型階段）
 

@@ -17,4 +17,6 @@
     <color name="ec_warning">#C18A48</color>
     <color name="ec_error">#B85C58</color>
     <color name="ec_disabled">#B9BDB9</color>
+    <!-- Launcher adaptive icon 背景：暖白，與設計系統同一色。 -->
+    <color name="ic_launcher_background">#F7F6F2</color>
 </resources>
