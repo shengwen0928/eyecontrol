@@ -118,9 +118,10 @@ class GazeModel(
 
         /**
          * 模型存檔格式版本。特徵定義或存檔欄位改變時遞增；
-         * 舊版存檔（無 version 欄位）視為格式 v1 相容，版本不符者視為未校正。
+         * 舊版存檔（無 version 欄位）與版本不符者皆視為未校正（須重校，避免靜默誤用舊格式模型）。
+         * v2：kx/ky 改以正負範圍學習（符號由校正資料決定），v1 模型一律重校。
          */
-        private const val MODEL_VERSION = 1
+        private const val MODEL_VERSION = 2
 
         private fun prefs(context: Context) =
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -138,7 +139,7 @@ class GazeModel(
                 val baseYawVal = json.optDouble("baseYaw", 0.0)
                 val kxVal = json.optDouble("kx", 1.6)
                 val kyVal = json.optDouble("ky", 1.3)
-                val version = json.optInt("version", MODEL_VERSION)
+                val version = json.optInt("version", 0)
                 // 幾何基準為選填：舊存檔沒有這幾欄時，修正自動關閉（不拿 0.0 假裝量過）
                 val deviceBasePitchVal = json.optDouble("deviceBasePitch", Double.NaN)
                     .takeIf { it.isFinite() }
@@ -228,7 +229,10 @@ class GazeModel(
             for (i in 0 until extD) ataX[i][i] += lambda
             val solX = solve(ataX, atx)
             val wx = solX.copyOfRange(0, d)
-            val kx = solX[d].coerceIn(0.5, 3.0) // 限制補償範圍以確保穩定
+            // 補償係數的符號由校正資料決定，不預設方向：特徵 7/8 是相機影像座標系的量測，
+            // pitch 增大對應螢幕上的哪個方向從未在實機上驗證過；舊版強制限制在正值 0.5–3.0，
+            // 資料要負值時會被夾成 +0.5，垂直補償整個算反、游標被壓向中下方（v0.4.1 修正）。
+            val kx = solX[d].coerceIn(-3.0, 3.0) // 限制補償範圍以確保穩定
 
             // 2. 訓練 Y 軸 (同時求得 wy 與 ky)
             val ataY = Array(extD) { DoubleArray(extD) }
@@ -252,7 +256,9 @@ class GazeModel(
             for (i in 0 until extD) ataY[i][i] += lambda
             val solY = solve(ataY, aty)
             val wy = solY.copyOfRange(0, d)
-            val ky = solY[d].coerceIn(0.5, 3.0) // 限制補償範圍以確保穩定
+            // 同 X 軸：ky 的符號由資料決定（見上）；強制正值會讓頭部上仰時游標反被往下推，
+            // 看上面要把眼球往上翻到底才夠得到（v0.4.1 修正）。
+            val ky = solY[d].coerceIn(-3.0, 3.0) // 限制補償範圍以確保穩定
 
             return GazeModel(
                 wx, wy, basePitch, baseYaw, kx, ky,
