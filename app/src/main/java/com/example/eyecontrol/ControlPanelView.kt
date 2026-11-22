@@ -60,7 +60,11 @@ class ControlPanelView(
     var collapsed = true
     private var handleProgress = 0f
 
-    fun setCollapsed(collapsed: Boolean) {
+    /**
+     * 切換收合／展開，並重置注視暫存。函式名刻意避開 setCollapsed：
+     * Kotlin 會為 var collapsed 自動產生同簽名的 setter，撞名無法編譯。
+     */
+    fun setPanelCollapsed(collapsed: Boolean) {
         this.collapsed = collapsed
         hoveredIndex = -1
         hoverProgress = 0f

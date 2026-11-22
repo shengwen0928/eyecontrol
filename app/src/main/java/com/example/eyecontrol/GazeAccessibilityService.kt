@@ -276,7 +276,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         wm.addView(view, lp)
         controlView = view
         // 預設收合：只留右緣小把手，注視把手才展開整列面板。
-        view.setCollapsed(true)
+        view.setPanelCollapsed(true)
     }
 
     /** 展開／收起模式面板，並同步 view 的繪製狀態與注視暫存。 */
@@ -287,7 +287,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         handleHoverStart = 0L
         handleArmed = false
         lastPanelHoverAt = SystemClock.elapsedRealtime()
-        controlView?.setCollapsed(!expanded)
+        controlView?.setPanelCollapsed(!expanded)
         controlView?.setHover(-1, 0f)
     }
 
