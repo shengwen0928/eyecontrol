@@ -4,6 +4,8 @@ import android.Manifest
 import android.app.AlertDialog
 import android.app.DownloadManager
 import android.content.BroadcastReceiver
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -13,6 +15,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.widget.ScrollView
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -106,6 +110,8 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        showCrashReportIfPending()
+
         binding.btnCamera.setOnClickListener {
             requestCamera.launch(Manifest.permission.CAMERA)
         }
@@ -196,6 +202,37 @@ class MainActivity : AppCompatActivity() {
         )
         // 只有全新啟動時檢查更新（旋轉螢幕重建時不重複跳提示）
         if (savedInstanceState == null) checkForUpdate()
+    }
+
+    /**
+     * 上次閃退留下的紀錄：只顯示一次，內容可複製、可清除。沒有紀錄時什麼都不做。
+     * 對話框在 onCreate 顯示、Activity 恢復後才真正貼到視窗，不影響正常流程。
+     */
+    private fun showCrashReportIfPending() {
+        val report = CrashReporter.pendingReport(this) ?: return
+        val trace = runCatching { report.readText() }.getOrNull()?.take(4000) ?: return
+        CrashReporter.markShown(this, report)
+        val textView = TextView(this).apply {
+            text = "上次開啟時 App 閃退了，紀錄如下。把這頁截圖或複製文字傳給開發者，就能定位問題。\n\n$trace"
+            setTextIsSelectable(true)
+            textSize = 13f
+            setPadding(48, 32, 48, 32)
+        }
+        val scroll = ScrollView(this).apply { addView(textView) }
+        AlertDialog.Builder(this)
+            .setTitle("上次閃退紀錄")
+            .setView(scroll)
+            .setPositiveButton("複製紀錄") { _, _ ->
+                val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("閃退紀錄", textView.text))
+                Toast.makeText(this, "已複製", Toast.LENGTH_SHORT).show()
+            }
+            .setNeutralButton("清除紀錄") { _, _ ->
+                CrashReporter.clearAll(this)
+                Toast.makeText(this, "紀錄已清除", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("關閉", null)
+            .show()
     }
 
     override fun onResume() {

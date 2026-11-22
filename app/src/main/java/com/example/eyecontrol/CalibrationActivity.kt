@@ -89,8 +89,7 @@ class CalibrationActivity : AppCompatActivity() {
                 if (!isFinishing && !finished &&
                     lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
                 ) {
-                    engine.start(this)
-                    engineStarted = true
+                    startEngineSafely()
                 }
             }
         }
@@ -104,8 +103,7 @@ class CalibrationActivity : AppCompatActivity() {
                 if (!isFinishing && !finished && !engineStarted &&
                     lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
                 ) {
-                    engine.start(this)
-                    engineStarted = true
+                    startEngineSafely()
                 }
             }
         }
@@ -117,6 +115,21 @@ class CalibrationActivity : AppCompatActivity() {
         if (engineStarted) {
             engine.stop()
             engineStarted = false
+        }
+    }
+
+    /**
+     * 啟動相機引擎：模型或相機建立失敗時不讓 App 直接閃退，改留紀錄、提示原因、
+     * 回到上一頁——下次開啟主畫面會顯示完整閃退／錯誤紀錄供回報。
+     */
+    private fun startEngineSafely() {
+        try {
+            engine.start(this)
+            engineStarted = true
+        } catch (e: Exception) {
+            CrashReporter.recordCaught(this, "engine.start", e)
+            Toast.makeText(this, "相機啟動失敗：${e.message}，請重試", Toast.LENGTH_LONG).show()
+            finish()
         }
     }
 
@@ -209,6 +222,18 @@ class CalibrationActivity : AppCompatActivity() {
 
     private fun finishCalibration() {
         finished = true
+        try {
+            finishCalibrationInternal()
+        } catch (e: Exception) {
+            // 訓練或存檔失敗也不閃退：留紀錄、提示原因，讓使用者能回報。
+            CrashReporter.recordCaught(this, "finishCalibration", e)
+            Toast.makeText(this, "校正儲存失敗：${e.message}", Toast.LENGTH_LONG).show()
+        }
+        finish()
+    }
+
+    private fun finishCalibrationInternal() {
+        finished = true
         val screenW = view.width
         val screenH = view.height
         // 校正期間裝置姿勢的平均值 = 陀螺儀修正的基準（只取有量到角度的樣本；全無則不啟用修正）
@@ -266,8 +291,10 @@ class CalibrationActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        engine.stop()
-        engineStarted = false
+        if (::engine.isInitialized) {
+            engine.stop()
+            engineStarted = false
+        }
         // 通知服務重新載入校正結果並接回相機
         GazeAccessibilityService.resumeAfterCalibration()
     }

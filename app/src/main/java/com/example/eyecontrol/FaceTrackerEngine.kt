@@ -88,7 +88,14 @@ class FaceTrackerEngine(
             }
             .setErrorListener { e -> Log.e(TAG, "FaceLandmarker 錯誤", e) }
             .build()
-        landmarker = FaceLandmarker.createFromOptions(context, options)
+        try {
+            landmarker = FaceLandmarker.createFromOptions(context, options)
+        } catch (e: Exception) {
+            // 模型建立失敗（檔案損壞、記憶體不足等）：記下原因後往上拋，
+            // 由呼叫端決定降級處理（校正頁會提示後退回，不直接閃退）。
+            Log.e(TAG, "FaceLandmarker 建立失敗", e)
+            throw e
+        }
 
         analysisExecutor = Executors.newSingleThreadExecutor()
 
