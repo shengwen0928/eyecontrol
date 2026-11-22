@@ -766,6 +766,47 @@
                             android:textSize="@dimen/ec_text_small" />
                     </LinearLayout>
                 </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/ec_stone" />
+
+                <LinearLayout
+                    android:id="@+id/rowRemote"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="遠端監控（暫時除錯用）"
+                            android:textSize="@dimen/ec_text_body" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="開啟後自動記錄並上傳游標數字給開發者監看，不必自己看紀錄；調適完會移除此功能。"
+                            android:textColor="@color/ec_text_secondary"
+                            android:textSize="@dimen/ec_text_small" />
+                    </LinearLayout>
+
+                    <Switch
+                        android:id="@+id/switchRemote"
+                        android:layout_width="wrap_content"
+                        android:layout_height="48dp"
+                        android:contentDescription="遠端監控" />
+                </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

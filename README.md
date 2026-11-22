@@ -174,6 +174,8 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 存於本機 SharedPreferences。唯一會連網的功能是「更新檢查」：App 啟動時向
 `api.github.com` 查詢最新 release 版本，不傳送任何個人資料；除此之外不連網，
 不含任何第三方追蹤。
+唯一的例外是暫時性的「遠端監控」（側載版設定中預設關閉，開啟後才會上傳游標
+診斷數字供開發者分析游標偏移，除錯完成後移除）。
 完整隱私說明見 `docs/privacy.html`。
 
 ## 貢獻

@@ -71,12 +71,17 @@ class SettingsActivity : AppCompatActivity() {
         binding.switchDistance.isChecked = s.distanceCompensation
         binding.switchCondition.isChecked = s.conditionCorrection
         binding.switchDiag.isChecked = s.diagnosticLogging
+        binding.switchRemote.isChecked = s.remoteMonitor
+        // Play 商店版無網路權限，遠端監控無法上傳，整列隱藏。
+        binding.rowRemote.visibility =
+            if (BuildConfig.REMOTE_MONITOR_ENABLED) View.VISIBLE else View.GONE
 
         // 開關整列可點：點列身切換開關，點開關本身由開關自己處理，不會重複觸發。
         binding.rowCondition.setOnClickListener { binding.switchCondition.toggle() }
         binding.rowDistance.setOnClickListener { binding.switchDistance.toggle() }
         binding.rowGyro.setOnClickListener { binding.switchGyro.toggle() }
         binding.rowDiag.setOnClickListener { binding.switchDiag.toggle() }
+        binding.rowRemote.setOnClickListener { binding.switchRemote.toggle() }
         binding.rowDiagSummary.setOnClickListener { showDiagSummary() }
 
         // 基本：情境切換（點一下換下一個，三個情境循環）。
@@ -251,6 +256,7 @@ class SettingsActivity : AppCompatActivity() {
             distanceCompensation = binding.switchDistance.isChecked,
             conditionCorrection = binding.switchCondition.isChecked,
             diagnosticLogging = binding.switchDiag.isChecked,
+            remoteMonitor = binding.switchRemote.isChecked,
         ).clamped()
         s.save(this)
         Toast.makeText(this, "設定已儲存", Toast.LENGTH_SHORT).show()
@@ -272,6 +278,7 @@ class SettingsActivity : AppCompatActivity() {
         binding.switchDistance.isChecked = d.distanceCompensation
         binding.switchCondition.isChecked = d.conditionCorrection
         binding.switchDiag.isChecked = d.diagnosticLogging
+        binding.switchRemote.isChecked = d.remoteMonitor
         Toast.makeText(this, "已恢復預設值（按儲存才生效）", Toast.LENGTH_SHORT).show()
     }
 

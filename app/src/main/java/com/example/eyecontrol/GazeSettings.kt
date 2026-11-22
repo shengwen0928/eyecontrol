@@ -44,6 +44,13 @@ data class GazeSettings(
      * 不上傳），供分析游標不動／偏移的原因。預設關閉；記錄最多 120 秒自動停止。
      */
     val diagnosticLogging: Boolean = false,
+    /**
+     * 遠端監控（暫時除錯用，調適完移除）：開啟後自動記錄游標數據並上傳到開發者
+     * 的監控端點（只含游標數字與臉部特徵數值，不含影像），供開發者直接監看分析，
+     * 使用者不必自己看紀錄。預設關閉；與診斷紀錄共用同一份本機檔案與 120 秒上限。
+     * Play 商店版無網路權限，此開關不顯示（見 BuildConfig.REMOTE_MONITOR_ENABLED）。
+     */
+    val remoteMonitor: Boolean = false,
 ) {
 
     fun clamped(): GazeSettings {
@@ -85,6 +92,7 @@ data class GazeSettings(
             putBoolean(KEY_DISTANCE_COMPENSATION, distanceCompensation)
             putBoolean(KEY_CONDITION_CORRECTION, conditionCorrection)
             putBoolean(KEY_DIAGNOSTIC_LOGGING, diagnosticLogging)
+            putBoolean(KEY_REMOTE_MONITOR, remoteMonitor)
         }.apply()
     }
 
@@ -135,6 +143,7 @@ data class GazeSettings(
         private const val KEY_DISTANCE_COMPENSATION = "distance_compensation"
         private const val KEY_CONDITION_CORRECTION = "condition_correction"
         private const val KEY_DIAGNOSTIC_LOGGING = "diagnostic_logging"
+        private const val KEY_REMOTE_MONITOR = "remote_monitor"
 
         fun load(context: Context): GazeSettings {
             // 存檔損毀（型別不符等）時直接回預設值，不要讓例外沿 prefs 監聽炸開服務
@@ -160,6 +169,7 @@ data class GazeSettings(
                     distanceCompensation = p.getBoolean(KEY_DISTANCE_COMPENSATION, true),
                     conditionCorrection = p.getBoolean(KEY_CONDITION_CORRECTION, true),
                     diagnosticLogging = p.getBoolean(KEY_DIAGNOSTIC_LOGGING, false),
+                    remoteMonitor = p.getBoolean(KEY_REMOTE_MONITOR, false),
                 ).clamped()
             } catch (e: Exception) {
                 GazeSettings()

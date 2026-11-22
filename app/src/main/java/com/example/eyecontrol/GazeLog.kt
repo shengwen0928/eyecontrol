@@ -2,11 +2,15 @@ package com.example.eyecontrol
 
 import android.content.Context
 import android.os.SystemClock
+import android.util.Log
 import java.io.BufferedWriter
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.Executors
 
 /**
  * 暫時性診斷紀錄：只記數字（特徵與座標），不含影像、不上傳，存在 App 內部儲存。
@@ -23,6 +27,25 @@ object GazeLog {
     private const val MIN_INTERVAL_MS = 100L
     private const val HEADER = "t,face,iod,pitch,yaw,rawX,rawY,gainX,gainY,curX,curY,sens,offX,offY"
 
+    /**
+     * 遠端監控端點（Supabase 專案 gaze-monitor，暫時除錯用，調適完連同此段程式一併移除）。
+     * 只收游標數字 CSV，不含影像。anon 金鑰是 Supabase 設計上可放進 App 的公開金鑰，
+     * 資料庫 RLS 只允許它 INSERT（不能讀、不能改、不能刪）；讀取只用 service_role 金鑰，
+     * 那把絕不進 App。
+     */
+    private const val SUPABASE_URL = "https://uxkzxdwjzonpffpqjsoj.supabase.co"
+    private const val SUPABASE_ANON_KEY =
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV4a3p4ZHdqem9ucGZmcHFqc29qIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTUzMjIwMjQsImV4cCI6MjExMDg5ODAyNH0.l5Xb3Vhx3R704s4IcQEvOr-uPMwXtOR_4rIDEo4aoTM"
+    private val uploadExecutor = Executors.newSingleThreadExecutor()
+
+    private var currentFile: File? = null
+
+    /** 檔名流水號：同一秒內重開新錄製時段也不撞檔名（撞檔名會撞上傳主鍵、丟資料）。 */
+    private var sessionCounter = 0
+
+    /** 這份檔案期間是否曾開啟遠端監控：是才在關檔時上傳。 */
+    private var pendingUpload = false
+
     private var writer: BufferedWriter? = null
     private var startedMs = 0L
     private var lastMs = 0L
@@ -36,11 +59,13 @@ object GazeLog {
 
     /**
      * 記一筆（10 Hz 節流）。[enabled] 為 false 時關閉目前檔案並直接返回，
-     * 故服務端每幀都呼叫此方法即可，不必自己管開關狀態。
+     * 故服務端每幀都呼叫此方法即可，不必自己管開關狀態。[remoteUpload] 為 true
+     * 表示這幀期間遠端監控開著，關檔時把整份檔案上傳。
      */
     fun record(
         context: Context,
         enabled: Boolean,
+        remoteUpload: Boolean,
         face: Boolean,
         features: DoubleArray?,
         rawX: Double?,
@@ -63,18 +88,21 @@ object GazeLog {
         if (writer == null) {
             if (autoStopped) return
             val dir = File(context.filesDir, DIR).apply { mkdirs() }
-            val ts = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
-            val file = File(dir, "gaze-$ts.csv")
+            val ts = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss-SSS", Locale.US).format(Date())
+            val file = File(dir, "gaze-$ts-${sessionCounter++}.csv")
             val w = runCatching { file.bufferedWriter() }.getOrNull() ?: return
             runCatching { w.write(HEADER + "\n") }.onFailure {
                 runCatching { w.close() }
                 return
             }
             writer = w
+            currentFile = file
+            pendingUpload = false
             startedMs = now
             rows = 0
             dir.listFiles()?.sortedByDescending { it.name }?.drop(MAX_FILES)?.forEach { it.delete() }
         }
+        pendingUpload = pendingUpload || remoteUpload
         if (now - startedMs > MAX_SECONDS * 1000L) {
             autoStopped = true
             close()
@@ -102,12 +130,62 @@ object GazeLog {
         }.onFailure { close() }
     }
 
-    fun close() {
+    fun close(upload: Boolean = true) {
+        val file = currentFile
+        val doUpload = upload && pendingUpload && file != null && rows > 0
+        val rowCount = rows
         // flush 失敗時也要 close，兩個步驟分開包，免得前者拋出就跳過後者。
         runCatching { writer?.flush() }
         runCatching { writer?.close() }
         writer = null
+        currentFile = null
+        pendingUpload = false
         rows = 0
+        // 關檔當下就把內容快照進記憶體再交給背景上傳：檔名可能被下一時段
+        // 覆寫或被清檔刪掉，上傳執行緒事後再讀檔會讀到錯的內容。
+        val csvText = if (doUpload) runCatching { file.readText() }.getOrNull() else null
+        if (csvText != null) {
+            uploadExecutor.submit { uploadFile(csvText, file.nameWithoutExtension, rowCount) }
+        }
+    }
+
+    /** 把一份關好的紀錄上傳到監控端點（Supabase REST insert）。失敗只寫 Logcat，不打擾使用者、不重試。 */
+    private fun uploadFile(csvText: String, id: String, rowCount: Int) {
+        if (SUPABASE_URL.isBlank()) return
+        runCatching {
+            val body = """{"id":${jsonStr(id)},"rows":$rowCount,"csv":${jsonStr(csvText)}}"""
+            val bytes = body.toByteArray(Charsets.UTF_8)
+            val conn = (URL("$SUPABASE_URL/rest/v1/gaze_logs").openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 10_000
+                readTimeout = 10_000
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("apikey", SUPABASE_ANON_KEY)
+                setRequestProperty("Authorization", "Bearer $SUPABASE_ANON_KEY")
+                setRequestProperty("Prefer", "return=minimal")
+            }
+            conn.outputStream.use { it.write(bytes) }
+            val code = conn.responseCode
+            conn.disconnect()
+            if (code !in 200..299) Log.w("GazeLog", "monitor upload failed: HTTP $code")
+        }.onFailure { Log.w("GazeLog", "monitor upload failed", it) }
+    }
+
+    /** 最小 JSON 字串跳脫：CSV 內含換行，必須跳脫才能包進 JSON。 */
+    private fun jsonStr(s: String): String {
+        val sb = StringBuilder("\"")
+        for (ch in s) {
+            when (ch) {
+                '"' -> sb.append("\\\"")
+                '\\' -> sb.append("\\\\")
+                '\n' -> sb.append("\\n")
+                '\r' -> sb.append("\\r")
+                '\t' -> sb.append("\\t")
+                else -> if (ch < ' ') sb.append("\\u%04x".format(ch.code)) else sb.append(ch)
+            }
+        }
+        return sb.append('"').toString()
     }
 
     /** 把緩衝區寫出（摘要計算前呼叫，免得看到 5 秒前的舊數據）。 */
@@ -121,7 +199,7 @@ object GazeLog {
     }
 
     fun clearAll(context: Context) {
-        close()
+        close(upload = false)
         File(context.filesDir, DIR).listFiles()?.forEach { it.delete() }
     }
 

@@ -285,7 +285,9 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             // 診斷紀錄也要記臉遺失幀：邊緣看不到臉時，游標不動可能是追蹤丟失而非模型問題。
             // 偏移記目前實際套用的值（與主路徑同一算法），免得摘要的平均偏移被 0 拉偏。
             GazeLog.record(
-                this, settings.diagnosticLogging, face = false, features = null,
+                this, settings.diagnosticLogging || settings.remoteMonitor,
+                remoteUpload = settings.remoteMonitor,
+                face = false, features = null,
                 rawX = null, rawY = null, gainedX = null, gainedY = null,
                 curX = null, curY = null, sensitivity = settings.sensitivity,
                 offsetX = if (settings.conditionCorrection) appliedOffsetX else 0f,
@@ -387,7 +389,9 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         // 診斷紀錄（開關關閉時此呼叫只負責關檔，不寫入）：記原始預測、放大後、
         // 濾波後三段座標，才能分清是哪一段把移動吃掉或推偏。
         GazeLog.record(
-            this, settings.diagnosticLogging, face = true, features = sample.features,
+            this, settings.diagnosticLogging || settings.remoteMonitor,
+            remoteUpload = settings.remoteMonitor,
+            face = true, features = sample.features,
             rawX = rawX, rawY = rawY, gainedX = gainedX, gainedY = gainedY,
             curX = x, curY = y, sensitivity = settings.sensitivity,
             offsetX = effOffsetX, offsetY = effOffsetY,
