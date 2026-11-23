@@ -134,4 +134,36 @@ class GazeModelMathTest {
         assertEquals(640.0, result.first, 1e-9)
         assertEquals(expectedY, result.second, 1e-9)
     }
+
+    @Test
+    fun predict_headPoseCompensationOff_returnsRidgeOnlyOutput() {
+        val wx = DoubleArray(GazeFeatureExtractor.DIM)
+        wx[0] = 800.0
+        wx[21] = 540.0
+        val wy = DoubleArray(GazeFeatureExtractor.DIM)
+        wy[1] = 800.0
+        wy[21] = 1200.0
+        val model = GazeModel(wx, wy, basePitch = 0.0, baseYaw = 0.0, kx = 1.6, ky = 1.3)
+        val f = featureVector(0.1, 0.2)
+        f[7] = 0.15
+        f[8] = -0.1
+        val (xOff, yOff) = model.predict(
+            f, headPoseCompensation = false,
+            gyroCompensation = false, distanceCompensation = false,
+        )
+        assertEquals(540.0 + 800.0 * 0.1, xOff, 1e-6)
+        assertEquals(1200.0 + 800.0 * 0.2, yOff, 1e-6)
+        val (xOn, yOn) = model.predict(
+            f, headPoseCompensation = true,
+            gyroCompensation = false, distanceCompensation = false,
+        )
+        assertEquals(xOff + -0.1 * 1080 * 1.6, xOn, 1e-6)
+        assertEquals(yOff - 0.15 * 2400 * 1.3, yOn, 1e-6)
+        // 預設值維持補償開啟：現有呼叫端行為不變。
+        val (xDef, yDef) = model.predict(
+            f, gyroCompensation = false, distanceCompensation = false,
+        )
+        assertEquals(xOn, xDef, 0.0)
+        assertEquals(yOn, yDef, 0.0)
+    }
 }

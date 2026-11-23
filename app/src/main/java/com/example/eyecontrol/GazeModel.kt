@@ -33,6 +33,8 @@ class GazeModel(
     /**
      * 預測螢幕座標（像素）：先做幾何頭部晃動補償，再依序做裝置角度修正與臉距縮放。
      * devicePitch / deviceRoll 為 NaN（無感測器資料）或開關關閉時，對應修正自動跳過。
+     * headPoseCompensation=false 時跳過 kx/ky 幾何項、只輸出 ridge 映射（對照實驗用；
+     * 預設 true，現有呼叫端行為不變）。
      */
     fun predict(
         f: DoubleArray,
@@ -42,6 +44,7 @@ class GazeModel(
         deviceRoll: Double = Double.NaN,
         gyroCompensation: Boolean = true,
         distanceCompensation: Boolean = true,
+        headPoseCompensation: Boolean = true,
     ): Pair<Double, Double> {
         // 特徵不足時直接失敗，不要讓 f[7]/f[8] 拋出難懂的越界錯誤
         require(f.size >= 9) { "特徵維度不足：需要至少 9 維，實際 ${f.size} 維" }
@@ -52,15 +55,20 @@ class GazeModel(
             py += wy[i] * f[i]
         }
 
-        // 頭部姿態補償 (Head pose compensation)
+        // 頭部姿態補償 (Head pose compensation)：headPoseCompensation=false 時跳過，
+        // 只輸出 ridge 映射（對照實驗用，見 docs/head-pose-compensation-experiment.md）。
         val curPitch = f[7]
         val curYaw = f[8]
         val deltaPitch = curPitch - basePitch
         val deltaYaw = curYaw - baseYaw
 
         // 幾何補償：使用自適應的 kx 與 ky
-        var outX = px + deltaYaw * screenW * kx
-        var outY = py - deltaPitch * screenH * ky
+        var outX = px
+        var outY = py
+        if (headPoseCompensation) {
+            outX += deltaYaw * screenW * kx
+            outY -= deltaPitch * screenH * ky
+        }
 
         // 裝置角度修正：只吃與校正基準的差值。
         // 注意：特徵 7/8 是相機影像座標系的量測，手機轉動時它們也會變，kx/ky 項可能已把

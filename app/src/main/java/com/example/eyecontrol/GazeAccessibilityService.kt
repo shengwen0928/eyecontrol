@@ -655,10 +655,13 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             filterY.updateParams(minCutoff = settings.filterMinCutoff, beta = settings.filterBeta)
         }
 
+        // 對照實驗（review 分支限定，2026-11-23）：關閉 kx/ky 頭部姿態補償，
+        // 比較仰角漂移是否消失；合併前須經決定，不得視為定稿行為。
         val (rawX, rawY) = m.predict(
             sample.features, screenW, screenH,
             sample.devicePitch, sample.deviceRoll,
             settings.gyroCompensation, settings.distanceCompensation,
+            headPoseCompensation = false,
         )
 
         // 條件取樣：每幀平滑亮度／角度／臉距，供變化偵測與歷史紀錄用
@@ -1023,7 +1026,6 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
                         screenDwell.reset()
                     }
                 }
-            }
             }
         }
 
@@ -1436,10 +1438,13 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
 
         // 注視座標沿用主路徑同一管線（預測→條件偏移→靈敏度增益→濾波→箝制），
         // 只用來判定是否在目標區內，不驅動游標、不碰 hasValidCursor。
+        // 對照實驗（review 分支限定，2026-11-23）：關閉 kx/ky 頭部姿態補償，
+        // 比較仰角漂移是否消失；合併前須經決定，不得視為定稿行為。
         val (rawX, rawY) = m.predict(
             sample.features, screenW, screenH,
             sample.devicePitch, sample.deviceRoll,
             settings.gyroCompensation, settings.distanceCompensation,
+            headPoseCompensation = false,
         )
         val effOffsetX = if (settings.conditionCorrection) appliedOffsetX else 0f
         val effOffsetY = if (settings.conditionCorrection) appliedOffsetY else 0f
