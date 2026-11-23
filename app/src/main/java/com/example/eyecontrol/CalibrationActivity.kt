@@ -849,6 +849,41 @@ class CalibrationActivity : AppCompatActivity() {
         val cvText = if (cvErr.isNaN()) "—" else "${cvErr.toInt()} px"
         val passText = if (passErr.isNaN()) "—" else "${passErr.toInt()} px"
 
+        // 有效性檢查（DCL-01 品質門檻）：眼睛沒跟著目標移動時拒存——
+        // 退化資料不覆蓋舊模型、不清條件歷史；樣本紀錄照常上傳（供門檻複核），
+        // 再走既有 ERROR 態重試流程（注視可重試／退出，舊模型保留）。
+        val gate = CalibrationGate.evaluate(allFeatures, allTargets)
+        if (!gate.passed) {
+            uploadCalibLog(
+                screenW = screenW,
+                screenH = screenH,
+                model = model,
+                inSampleErrorPx = report.inSampleMeanErrorPx,
+                looErrorPx = cvErr,
+                leavePassOutErrorPx = passErr,
+                worstPointIndex = worst.pointIndex,
+                worstErrorPx = worst.meanErrorPx,
+                perPoint = report.perPoint,
+                calibratedAtMs = 0L,
+                refused = true,
+                separationRatio = gate.separationRatio,
+                separationThreshold = CalibrationGate.SEPARATION_RATIO_MIN,
+            )
+            val ratioText = if (gate.separationRatio.isFinite()) {
+                "%.2f".format(Locale.US, gate.separationRatio)
+            } else {
+                "無法量測"
+            }
+            enterError(
+                message = "偵測到注視沒有跟著目標移動：九個點的眼睛特徵幾乎相同" +
+                    "（分離度 $ratioText，門檻 ${CalibrationGate.SEPARATION_RATIO_MIN}），" +
+                    "這次校正沒有存檔，舊模型保留。",
+                retryLabel = "重新校正",
+                retry = { recalibrate() },
+            )
+            return
+        }
+
         CalibrationStore.saveModel(this, profileId, model, cvErr.takeIf { !it.isNaN() })
 
         // 完整重校：該情境的條件歷史作廢（舊偏移配新模型沒有意義），
@@ -885,6 +920,9 @@ class CalibrationActivity : AppCompatActivity() {
             worstErrorPx = worst.meanErrorPx,
             perPoint = report.perPoint,
             calibratedAtMs = calibratedAtMs,
+            refused = false,
+            separationRatio = gate.separationRatio,
+            separationThreshold = CalibrationGate.SEPARATION_RATIO_MIN,
         )
         showReport(
             ReportData(
@@ -910,6 +948,8 @@ class CalibrationActivity : AppCompatActivity() {
      * 診斷紀錄與遠端監控兩開關皆開才傳（與游標紀錄同一閘門語意），Play 版再由
      * [GazeLog] 內的 flavor 守衛擋下。失敗只走 Logcat（見 [GazeLog]），不打擾使用者。
      * 重試儲存時 [calibUploaded] 擋重複上傳；重新校正時由 [recalibrate] 重置。
+     * 被有效性檢查拒存時（[refused]）亦呼叫：樣本紀錄是門檻複核的依據，存檔
+     * 失敗與否不影響上傳；此時 calibratedAtMs 呼叫端傳 0（沒有新模型存檔）。
      */
     private fun uploadCalibLog(
         screenW: Int,
@@ -922,6 +962,9 @@ class CalibrationActivity : AppCompatActivity() {
         worstErrorPx: Double,
         perPoint: List<GazeEvaluator.PointError>,
         calibratedAtMs: Long,
+        refused: Boolean = false,
+        separationRatio: Double = Double.NaN,
+        separationThreshold: Double = Double.NaN,
     ) {
         if (calibUploaded || calibRows.isEmpty()) return
         if (!settings.diagnosticLogging || !settings.remoteMonitor) return
@@ -953,6 +996,9 @@ class CalibrationActivity : AppCompatActivity() {
             calibratedAtMs = calibratedAtMs,
             rowCount = calibRows.size,
             keptRowCount = calibRows.count { it.kept },
+            refused = refused,
+            separationRatio = separationRatio,
+            separationThreshold = separationThreshold,
         )
         GazeLog.uploadCalibration(id, CalibLog.buildCsv(calibRows), calibRows.size)
         GazeLog.uploadCalibration("$id-sum", summary, 0)

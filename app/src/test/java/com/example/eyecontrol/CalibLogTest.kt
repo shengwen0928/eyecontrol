@@ -98,4 +98,34 @@ class CalibLogTest {
         assertTrue(json.contains("\"rowCount\":378"))
         assertTrue(json.contains("\"keptRowCount\":270"))
     }
+
+    @Test
+    fun buildSummaryJson_refusedAndGateFields() {
+        val json = CalibLog.buildSummaryJson(
+            profileId = "sitting",
+            passCount = 1,
+            screenW = 1080,
+            screenH = 2400,
+            featureDim = 25,
+            inSampleErrorPx = 100.0,
+            looErrorPx = 200.0,
+            leavePassOutErrorPx = Double.NaN,
+            worstPointIndex = 0,
+            worstErrorPx = 150.0,
+            perPointErrors = listOf(100.0),
+            lightMinLux = 50.0,
+            lightMaxLux = 60.0,
+            lightMinLog = 1.0,
+            lightMaxLog = 2.0,
+            calibratedAtMs = 1L,
+            rowCount = 126,
+            keptRowCount = 90,
+            refused = true,
+            separationRatio = 0.8,
+            separationThreshold = 2.0,
+        )
+        assertTrue(json.contains("\"refused\":true"))
+        assertTrue(json.contains("\"separationRatio\":0.800"))
+        assertTrue(json.contains("\"separationThreshold\":2.000"))
+    }
 }
