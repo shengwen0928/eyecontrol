@@ -62,13 +62,26 @@ class CalibrationActivity : AppCompatActivity() {
     /** 與 allFeatures 一一對應的裝置角度（每筆樣本當下的 pitch / roll），用來算校正基準。 */
     private val allDeviceAngles = mutableListOf<Pair<Double, Double>>()
 
+    /**
+     * 與 allFeatures 一一對應的每筆 log10(lux)（NaN = 當時無感測器資料），
+     * 用來算模型的光跨度與報告的光線範圍；與 allPassIds 一一對應的輪次 id
+     * （多光源校正的第幾輪，0 起），用來算留一輪交叉驗證。
+     */
+    private val allLightLogs = mutableListOf<Double>()
+    private val allPassIds = mutableListOf<Int>()
+
+    /** 目前輪次（0 起）：多光源校正的第幾輪 9 點；每輪同一組目標點。 */
+    private var passIndex = 0
+
     // 目前狀態（僅在主執行緒讀寫；樣本從背景執行緒 post 過來）
     private var pointIndex = 0
     private var settleUntil = 0L
     private var points: List<Pair<Float, Float>> = emptyList()
 
-    /** 校正頁階段：同一時刻只有一個階段接受樣本（互斥閘門，見 onSample）。 */
-    private enum class Phase { HANDOVER, SAMPLING, REPORT, ASK, ERROR }
+    /** 校正頁階段：同一時刻只有一個階段接受樣本（互斥閘門，見 onSample）。
+     * PASS_CHOICE 為多光源校正的輪次選擇頁（一輪 9 點採完後，注視選擇
+     * 繼續下一輪／完成／退出；不因光線變化暫停或警告）。 */
+    private enum class Phase { HANDOVER, SAMPLING, REPORT, ASK, ERROR, PASS_CHOICE }
     private var phase = Phase.HANDOVER
 
     /** 引擎是否已啟動：onPause/onResume 交接時用，避免重複綁定或漏停。 */
@@ -85,8 +98,10 @@ class CalibrationActivity : AppCompatActivity() {
     /** 與 pointBuffer 一一對應的裝置角度，剔除離群值時跟著同一批樣本走。 */
     private val pointDeviceAngles = mutableListOf<Pair<Double, Double>>()
 
-    /** 本次校正期間收到的環境光（有效幀），用來算校正時的亮度基準。 */
-    private val calibrationLuxSamples = mutableListOf<Float>()
+    /** 與 pointBuffer 一一對應的每筆 log10(lux)，剔除離群值時跟著同一批樣本走。 */
+    private val pointLightLogs = mutableListOf<Double>()
+
+    /** 眼區反光指標樣本（有效幀），作為本次校正的眼鏡／反光基準。 */
     private val calibrationGlassesSamples = mutableListOf<Double>()
 
     /** 使用者設定（單一來源）：睜眼閾值、停留秒數、濾波參數皆取自此處。 */
@@ -145,6 +160,12 @@ class CalibrationActivity : AppCompatActivity() {
         val worstErrorPx: Int,
         val perPoint: List<GazeEvaluator.PointError>,
         val calibratedAtMs: Long,
+        /** 本次校正覆蓋的光線範圍文字（由平行 lux 記錄算出；無感測器資料時明說）。 */
+        val lightSpanText: String,
+        /** 留一輪交叉驗證誤差文字（輪次少於 2 個時為 "—"）。 */
+        val leavePassOutText: String,
+        /** 本次校正的輪數。 */
+        val passCount: Int,
     )
     private var report: ReportData? = null
     private var reportExpanded = false
@@ -353,6 +374,7 @@ class CalibrationActivity : AppCompatActivity() {
         view.setCompleted(index)
         pointBuffer.clear()
         pointDeviceAngles.clear()
+        pointLightLogs.clear()
         settleUntil = SystemClock.elapsedRealtime() + SETTLE_MS
         pointStartedAt = SystemClock.elapsedRealtime()
         val (x, y) = points[index]
@@ -368,7 +390,7 @@ class CalibrationActivity : AppCompatActivity() {
         if (isFinishing || points.isEmpty()) return
         when (phase) {
             Phase.HANDOVER -> return
-            Phase.REPORT, Phase.ASK, Phase.ERROR -> {
+            Phase.REPORT, Phase.ASK, Phase.ERROR, Phase.PASS_CHOICE -> {
                 onChoiceSample(sample)
                 return
             }
@@ -393,8 +415,6 @@ class CalibrationActivity : AppCompatActivity() {
         lastValidSampleAt = now
         faceLostHintShown = false
         view.setFaceLost(false)
-        // 環境光是條件，與睜眼與否無關：有效幀都收，作為本次校正的亮度基準
-        sample.ambientLux.takeIf { it.isFinite() && it >= 0f }?.let { calibrationLuxSamples.add(it) }
         // 眼區反光指標同為條件：有效幀都收，作為本次校正的眼鏡／反光基準
         sample.specularRatio.takeIf { it.isFinite() && it >= 0.0 }?.let { calibrationGlassesSamples.add(it) }
         // 眨眼/閉眼期間的樣本會污染訓練資料，丟棄；但逾時計時照走（否則
@@ -409,6 +429,8 @@ class CalibrationActivity : AppCompatActivity() {
         val target = points[pointIndex]
         pointBuffer.add(sample.features)
         pointDeviceAngles.add(sample.devicePitch to sample.deviceRoll)
+        // 光線與特徵平行記錄：剔除離群值時跟著同一批樣本走，永不脫鉤。
+        pointLightLogs.add(GazeFeatureExtractor.lightLogLux(sample.ambientLux))
         view.showTarget(target.first, target.second,
             pointBuffer.size / SAMPLES_PER_POINT.toFloat(),
             "${pointIndex + 1} / ${points.size}")
@@ -418,7 +440,9 @@ class CalibrationActivity : AppCompatActivity() {
             if (pointIndex + 1 < points.size) {
                 startPoint(pointIndex + 1)
             } else {
-                finishCalibration()
+                // 一輪 9 點採完：不直接結束，進入輪次選擇——注視選擇繼續下一輪
+                // （換個光線）或完成。多光源校正的核心步驟；不因光線變化暫停或警告。
+                enterPassChoice()
             }
         }
     }
@@ -467,6 +491,56 @@ class CalibrationActivity : AppCompatActivity() {
                 },
             ),
         )
+    }
+
+    /**
+     * 多光源校正的輪次選擇（一輪 9 點採完後）：注視選擇「換個光線再採一輪」、
+     * 「直接完成校正」或「退出校正」。繼續時下一輪重新採同一組 9 點；
+     * 建議但不強制：換個光線（開燈／關燈／換位置）再採，讓模型跨過光線範圍。
+     * 本頁不因光線變化暫停、警告或阻擋——光線是連續模型輸入，不是守衛條件。
+     * 至少一輪即可儲存；單輪校正與舊流程等價（模型仍含光特徵，跨度退化為
+     * 單一值時執行期光特徵恆為該值，見 GazeModel 的光跨度說明）。
+     */
+    private fun enterPassChoice() {
+        phase = Phase.PASS_CHOICE
+        choiceModel = CalibrationStore.loadModel(this, profileId)
+        view.setFaceLost(false)
+        val passesDone = passIndex + 1
+        view.showMessage(
+            "第 $passesDone 輪採完了",
+            listOf(
+                "這一輪的光線範圍：${lightSpanText(allLightLogs)}。",
+                "要換個光線再採一輪（讓模型看過更多光線），還是直接完成？",
+                "換光線的方式：開燈、關燈、走到窗邊或較暗處都可以。",
+                gazeHintLine(),
+            ),
+        )
+        showChoices(
+            listOf(
+                Choice("next", "換個光線再採一輪", primary = true) {
+                    passIndex++
+                    phase = Phase.SAMPLING
+                    hideChoices()
+                    view.clearScreen()
+                    startPoint(0)
+                },
+                Choice("finish", "直接完成校正", primary = false) {
+                    finishCalibration()
+                },
+                Choice("exit", "退出校正", primary = false) {
+                    exitCalibration()
+                },
+            ),
+        )
+    }
+
+    /** 由平行 lux 記錄算出的光線範圍文字（lux 整數顯示；無感測器資料時明說）。 */
+    private fun lightSpanText(logs: List<Double>): String {
+        val finite = logs.filter { it.isFinite() }
+        if (finite.isEmpty()) return "未量到光線（無光感測器資料）"
+        val minLux = Math.pow(10.0, finite.min()).toLong()
+        val maxLux = Math.pow(10.0, finite.max()).toLong()
+        return if (minLux == maxLux) "約 $minLux lux" else "$minLux–$maxLux lux"
     }
 
     /**
@@ -566,10 +640,12 @@ class CalibrationActivity : AppCompatActivity() {
     private fun choiceCursor(model: GazeModel, sample: GazeSample): Pair<Float, Float>? {
         val w = view.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
         val h = view.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels
+        // 連續光輸入：與服務主路徑相同，每幀的當前 lux 餵給模型。
         val (rawX, rawY) = model.predict(
             sample.features, w, h,
             sample.devicePitch, sample.deviceRoll,
             settings.gyroCompensation, settings.distanceCompensation,
+            logLux = GazeFeatureExtractor.lightLogLux(sample.ambientLux),
         )
         if (!rawX.isFinite() || !rawY.isFinite()) return null
         val t = sample.timestampMs / 1000.0
@@ -659,7 +735,7 @@ class CalibrationActivity : AppCompatActivity() {
         for (f in pointBuffer) for (i in 0 until 4) centroid[i] += f[i] / pointBuffer.size
 
         val keep = (pointBuffer.size * KEEP_RATIO).toInt().coerceAtLeast(1)
-        // 依同一排序取同一批樣本：特徵與裝置角度必須成對保留，否則基準會錯位
+        // 依同一排序取同一批樣本：特徵、裝置角度、光線、輪次必須成對保留，否則基準與光跨度會錯位
         pointBuffer.indices
             .sortedBy { i ->
                 (0 until 4).sumOf { j ->
@@ -670,6 +746,8 @@ class CalibrationActivity : AppCompatActivity() {
             .forEach { i ->
                 allFeatures.add(pointBuffer[i])
                 allDeviceAngles.add(pointDeviceAngles[i])
+                allLightLogs.add(pointLightLogs[i])
+                allPassIds.add(passIndex)
                 allTargets.add(target)
             }
         committedPoints++
@@ -703,13 +781,21 @@ class CalibrationActivity : AppCompatActivity() {
             allFeatures, allTargets,
             screenW = screenW.toDouble(), screenH = screenH.toDouble(),
             deviceBasePitch = deviceBasePitch, deviceBaseRoll = deviceBaseRoll,
+            lightLogLux = allLightLogs,
         )
 
-        // 訓練集誤差偏樂觀，只列出來參考；精度等級以留一法交叉驗證為準
+        // 訓練集誤差偏樂觀，只列出來參考；精度等級以留一法交叉驗證為準。
+        // 多光源校正另算留一輪交叉驗證：等級取兩種留一法中較差者——
+        // 光線沒跨過範圍時，留一輪誤差會誠實地比留一點誤差差。
         val report = GazeEvaluator.evaluate(model, allFeatures, allTargets, screenW, screenH)
         val cvErr = GazeEvaluator.leaveOnePointOut(allFeatures, allTargets, screenW, screenH)
+        val passErr = GazeEvaluator.leaveOnePassOut(
+            allFeatures, allTargets, allPassIds, screenW, screenH,
+            lightLogLux = allLightLogs,
+        )
         val avgErr = report.inSampleMeanErrorPx.toInt()
-        val gradeErr = if (cvErr.isNaN()) avgErr else cvErr.toInt()
+        val gradeErr = listOf(cvErr, passErr).filter { it.isFinite() }
+            .maxOrNull()?.toInt() ?: avgErr
         // 等級門檻 60／120／200 px 與 GazeEvaluator 計算皆不動（D-12 未決）；
         // 門檻為經驗值，報告頁會保留此性質說明，不得包裝為精度保證。
         val rating = when {
@@ -720,6 +806,7 @@ class CalibrationActivity : AppCompatActivity() {
         }
         val worst = report.worstPoint
         val cvText = if (cvErr.isNaN()) "—" else "${cvErr.toInt()} px"
+        val passText = if (passErr.isNaN()) "—" else "${passErr.toInt()} px"
 
         CalibrationStore.saveModel(this, profileId, model, cvErr.takeIf { !it.isNaN() })
 
@@ -729,15 +816,16 @@ class CalibrationActivity : AppCompatActivity() {
         val calibrationIod = allFeatures
             .mapNotNull { it.getOrNull(6)?.takeIf { v -> v.isFinite() && v > 0.0 } }
             .average().takeIf { allFeatures.isNotEmpty() } ?: Double.NaN
-        val calibrationLux = calibrationLuxSamples
-            .average().takeIf { calibrationLuxSamples.isNotEmpty() }?.toFloat() ?: Float.NaN
         val calibrationGlasses = calibrationGlassesSamples
             .average().takeIf { calibrationGlassesSamples.isNotEmpty() } ?: Double.NaN
         ConditionHistory.clearHistory(this, profileId)
         ConditionHistory.saveReference(
             this, profileId,
             ConditionHistory.Condition(
-                luxBucket = ConditionHistory.luxBucket(calibrationLux),
+                // v3 模型契約：光線是連續模型輸入，不再寫亮度基準分桶。
+                // luxBucket 寫 -1（未知），使光線永不觸發提醒、永不進入內插距離；
+                // 歷史紀錄只代表非光線殘差（姿勢／距離／反光），不與模型重複計算光線。
+                luxBucket = -1,
                 pitch = deviceBasePitch ?: Double.NaN,
                 roll = deviceBaseRoll ?: Double.NaN,
                 iod = calibrationIod,
@@ -757,6 +845,9 @@ class CalibrationActivity : AppCompatActivity() {
                 worstErrorPx = worst.meanErrorPx.toInt(),
                 perPoint = report.perPoint,
                 calibratedAtMs = calibratedAtMs,
+                lightSpanText = lightSpanText(allLightLogs),
+                leavePassOutText = passText,
+                passCount = passIndex + 1,
             ),
         )
     }
@@ -787,6 +878,8 @@ class CalibrationActivity : AppCompatActivity() {
             "精度等級：${data.ratingLabel}",
             "訓練集平均誤差：${data.inSampleErrorPx} px（僅供參考，偏樂觀）",
             "留一法交叉驗證誤差：${data.looText}",
+            "留一輪交叉驗證誤差：${data.leavePassOutText}（${data.passCount} 輪；少於 2 輪時為 —）",
+            "校正光線範圍：${data.lightSpanText}",
             "最差：第 ${data.worstPointIndex + 1} 點（${data.worstErrorPx} px）",
             "校正時間：$calibratedAtText",
             "等級門檻（60／120／200 px）為經驗值，不是精度保證。",
@@ -840,9 +933,12 @@ class CalibrationActivity : AppCompatActivity() {
         allFeatures.clear()
         allTargets.clear()
         allDeviceAngles.clear()
+        allLightLogs.clear()
+        allPassIds.clear()
+        passIndex = 0
         pointBuffer.clear()
         pointDeviceAngles.clear()
-        calibrationLuxSamples.clear()
+        pointLightLogs.clear()
         calibrationGlassesSamples.clear()
         committedPoints = 0
         pointTimeoutCount = 0

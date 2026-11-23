@@ -159,12 +159,17 @@ class FaceTrackerEngine(
                             rightY = it.refinedRightIris.y.toDouble(),
                         )
                     }
-                    val sample = GazeFeatureExtractor.extract(face, result.timestampMs(), refined)
+                    // 感測器快照先於特徵擷取：環境光是連續模型輸入，必須在
+                    // extract 內寫入光特徵（索引 22–24），不能事後才附加。
+                    val orientation = orientationTracker.snapshot()
+                    val lux = lightSensorTracker.snapshot()
+                    val sample = GazeFeatureExtractor.extract(
+                        face, result.timestampMs(), refined,
+                        ambientLux = lux ?: Float.NaN,
+                    )
                     if (sample == null) {
                         onSample(null)
                     } else {
-                        val orientation = orientationTracker.snapshot()
-                        val lux = lightSensorTracker.snapshot()
                         updateExposure(lux)
                         // 一律以 copy 附加感測器與影像度量：原本「兩者皆 null 就原樣回傳」
                         // 的分支與 copy 預設值等價（全為 NaN），合併後度量不會在該分支遺失。

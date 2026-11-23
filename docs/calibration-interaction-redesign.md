@@ -1,5 +1,7 @@
 # EyeControl 校正前互動流程與 D-4 重新設計（第一輪分析 B 組）
 
+> 2026-11-23 增補（review 樹，未合併／未推送）：特徵契約已由授權變更為 25 維（`MODEL_VERSION` 2→3；新增連續光特徵 f[22..24]，舊模型強制重校），校正流程改為多輪九點。詳見 `docs/light-robust-gaze-design.md`。本文件的提案寫於舊契約之下，其分析結論不追溯改寫；新工作依 v3 契約進行。
+
 > 性質：只讀程式碼、只新增文件的分析與提案文件。**只提案、不定案；不改任何現有檔案、不改版本號、不碰 `.github/workflows/`、不推送、不 commit、不發版。**
 > 基線：工作樹 `~/workspace/eyecontrol-p3`（無 `.git`，唯讀；遠端 main HEAD 為 `c6b80964`，v0.5.9 加上未推送的 Phase 3 實作）。本文件引用的程式行號一律以該樹為準。
 > 先前文件複用：`~/workspace/eyecontrol-phase3/`（`PLAN.md`、`STATE_DESIGN.md`、`TEST_PLAN.md`、`IMPLEMENTATION_NOTES.md`、`CANCEL_CONTRACT.md`、`D4_OPTIONS.md`、`TEST_RESULTS.md`）與 `~/workspace/eyecontrol-master-audit/docs/phase2/`（`GAPS_AND_DECISIONS.md`、`USER_JOURNEY.md`、`STATE_DIAGRAMS.md`）。

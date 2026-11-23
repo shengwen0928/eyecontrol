@@ -1,5 +1,7 @@
 # EyeControl 隱私與資安審查報告（§8）
 
+> 2026-11-23 增補（review 樹，未合併／未推送）：特徵契約已由授權變更為 25 維（`MODEL_VERSION` 2→3；新增連續光特徵 f[22..24]，舊模型強制重校）；光線改為連續模型輸入、多光源校正；`ConditionHistory` 的 lux 維度退出歷史修正。詳見 `docs/light-robust-gaze-design.md`。本變更不改變任何上傳面（特徵向量從不上傳；診斷 CSV 欄位不變）。本文以下「22 維」字樣指變更前的狀態，原文不改。
+
 > 性質：唯讀審查文件。只新增本文件，**不修改任何程式碼、版本號、workflow，不讀取任何 secrets／金鑰／keystore 內容，不轉錄任何金鑰值**。本報告記錄機制與程式位置，金鑰只以「寫死常數」稱之，不抄錄其值；`app/debug-keystore.b64` 的內容本審查未讀取；CI workflow 的 secret 只以「以 GitHub secrets 傳入」稱之，未讀取任何值。
 > 基線：`~/workspace/eyecontrol-p3`（repo 根目錄複本，含未推送的 Phase 3 實作）。`app/build.gradle.kts:29-30`：`versionCode = 13`、`versionName = "0.5.9"`。本目錄不是 git 工作樹（`git status` 回報非 git 儲存庫），任務書所稱「遠端 main HEAD `c6b80964`、v0.5.9」無法在本目錄以 git 再驗證，**取任務書與第一輪文件所述為前提，不宣稱為本輪 git 驗證結果**。合併後清單（merged manifest）、實機行為、伺服端設定皆未在本輪編譯／實機驗證，凡屬此類者一律標「待驗證／待定位」，不得宣稱已驗證。
 > 行號：除標明「沿用第一輪」者外，皆為本輪以 `grep -n`／`cat -n` 在本樹實測的現況行號。第一輪文件的行號已有漂移（例：`SettingsActivity.saveAndFinish` 第一輪稱 `:285`，本樹實測為 `:278` 起），引用舊文件時不得直接混用行號。

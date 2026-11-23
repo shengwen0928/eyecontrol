@@ -12,6 +12,10 @@ import kotlin.math.hypot
  *   8 點重新訓練，再預測被留出的點。被評估的點完全沒參與訓練，所以這個
  *   數字才是對「沒看過的位置預測得準不準」的誠實估計，也是校正完成時
  *   精度等級的依據。
+ * - 留一輪交叉驗證（leave-one-pass-out，多光源校正專用）：每次留出一整輪
+ *   （同一光線條件下的一次 9 點採樣）、用其餘輪重新訓練，再預測被留出的輪。
+ *   被評估的輪完全沒參與訓練，是對「沒見過的光線條件下預測得準不準」的
+ *   誠實估計；輪次少於 2 個時不計算。
  *
  * 一個校正點 = 一個目標座標；同座標的樣本（剔除離群值後每點約 14 幀）
  * 在分組與交叉驗證時視為同一組，絕不拆散到訓練集與測試集兩邊。
@@ -91,6 +95,48 @@ object GazeEvaluator {
             )
             errSum += meanError(subModel, features, targets, heldOut, screenW, screenH) * heldOut.size
             count += heldOut.size
+        }
+        return errSum / count
+    }
+
+    /**
+     * 留一輪交叉驗證：回傳所有被留出樣本的平均預測誤差（像素）。
+     * 每輪 = 多光源校正的一次 9 點採樣（passIds 相同者為同一輪）。
+     * 留出一整輪、用其餘輪重新訓練，再預測被留出的輪；被評估的輪
+     * 完全沒參與訓練，是對「沒見過的光線條件下預測得準不準」的誠實估計。
+     * 輪次少於 2 個、資料為空或長度不符時回傳 NaN。
+     * lightLogLux 與 leaveOnePointOut 的 train 呼叫相同：傳入時子模型的光跨度
+     * 由被留輪以外的樣本算出；不傳時由特徵 f[22] 還原。
+     */
+    fun leaveOnePassOut(
+        features: List<DoubleArray>,
+        targets: List<Pair<Float, Float>>,
+        passIds: List<Int>,
+        screenW: Int,
+        screenH: Int,
+        lambda: Double = 5e-4,
+        lightLogLux: List<Double>? = null,
+    ): Double {
+        if (features.isEmpty() || features.size != targets.size ||
+            passIds.size != features.size
+        ) return Double.NaN
+        val passes = passIds.toSet()
+        if (passes.size < 2) return Double.NaN
+        var errSum = 0.0
+        var count = 0
+        for (heldPass in passes) {
+            val heldIdx = targets.indices.filter { passIds[it] == heldPass }
+            val trainIdx = targets.indices.filter { passIds[it] != heldPass }
+            val subModel = GazeModel.train(
+                trainIdx.map { features[it] },
+                trainIdx.map { targets[it] },
+                lambda,
+                screenW.toDouble(),
+                screenH.toDouble(),
+                lightLogLux = lightLogLux?.let { logs -> trainIdx.map { logs[it] } },
+            )
+            errSum += meanError(subModel, features, targets, heldIdx, screenW, screenH) * heldIdx.size
+            count += heldIdx.size
         }
         return errSum / count
     }

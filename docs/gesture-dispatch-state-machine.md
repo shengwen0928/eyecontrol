@@ -1,5 +1,7 @@
 # EyeControl 手勢派發狀態機（GestureDispatcher 設計）
 
+> 2026-11-23 增補（review 樹，未合併／未推送）：「五個不能動」中的 22 維特徵契約一項，已由授權變更為 25 維（`MODEL_VERSION` 2→3；新增連續光特徵 f[22..24]，舊模型強制重校）；其餘四項不動。詳見 `docs/light-robust-gaze-design.md`。
+
 > 性質：設計文件。**只寫設計，不改任何程式碼。** 本文件不含程式碼修改、
 > 不改版本號、不碰 `.github/workflows/`、不推送、不發版。
 > 基線：`~/workspace/eyecontrol-p3`（v0.5.9 加未推送的 Phase 3 實作；

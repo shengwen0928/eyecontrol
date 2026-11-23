@@ -657,11 +657,13 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
 
         // 對照實驗（review 分支限定，2026-11-23）：關閉 kx/ky 頭部姿態補償，
         // 比較仰角漂移是否消失；合併前須經決定，不得視為定稿行為。
+        // 連續光輸入：每幀的當前 lux 餵給模型（夾取到訓練跨度內），絕不以固定值打發。
         val (rawX, rawY) = m.predict(
             sample.features, screenW, screenH,
             sample.devicePitch, sample.deviceRoll,
             settings.gyroCompensation, settings.distanceCompensation,
             headPoseCompensation = false,
+            logLux = GazeFeatureExtractor.lightLogLux(sample.ambientLux),
         )
 
         // 條件取樣：每幀平滑亮度／角度／臉距，供變化偵測與歷史紀錄用
@@ -1086,9 +1088,14 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
     private fun smoothDouble(prev: Double, current: Double): Double =
         if (prev.isNaN()) current else prev + (current - prev) * CONDITION_SMOOTH_ALPHA
 
+    // v3 模型契約：光線是連續模型輸入，不再走 ConditionHistory 的分桶修正
+    // （否則同一光效應會被模型與歷史偏移算兩次）。luxBucket 寫 -1（未知），
+    // 既有「未知分量不參與判定」邏輯使光線永不觸發提醒、永不進入內插距離；
+    // 歷史紀錄只代表非光線殘差（姿勢／距離／反光）。見設計文件 §2.5。
+    // smoothedLux 仍每幀平滑、記入診斷 CSV（欄位不變），只不進條件判定。
     private fun currentCondition(): ConditionHistory.Condition =
         ConditionHistory.Condition(
-            luxBucket = ConditionHistory.luxBucket(smoothedLux),
+            luxBucket = -1,
             pitch = smoothedPitch,
             roll = smoothedRoll,
             iod = smoothedIod,
@@ -1280,7 +1287,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         dwellTimeMs = settings.dwellTimeMs,
     )
 
-    /** 由同一幀的已算數據組裝控制器輸入（不自建樣本來源；特徵契約 22 維不動）。 */
+    /** 由同一幀的已算數據組裝控制器輸入（不自建樣本來源；特徵契約 25 維，含連續光特徵）。 */
     private fun edgeFrame(
         sample: GazeSample,
         x: Float,
@@ -1440,11 +1447,13 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         // 只用來判定是否在目標區內，不驅動游標、不碰 hasValidCursor。
         // 對照實驗（review 分支限定，2026-11-23）：關閉 kx/ky 頭部姿態補償，
         // 比較仰角漂移是否消失；合併前須經決定，不得視為定稿行為。
+        // 連續光輸入：與主路徑相同，每幀的當前 lux 餵給模型。
         val (rawX, rawY) = m.predict(
             sample.features, screenW, screenH,
             sample.devicePitch, sample.deviceRoll,
             settings.gyroCompensation, settings.distanceCompensation,
             headPoseCompensation = false,
+            logLux = GazeFeatureExtractor.lightLogLux(sample.ambientLux),
         )
         val effOffsetX = if (settings.conditionCorrection) appliedOffsetX else 0f
         val effOffsetY = if (settings.conditionCorrection) appliedOffsetY else 0f

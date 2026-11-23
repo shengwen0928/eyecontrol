@@ -11,10 +11,13 @@ import kotlin.math.hypot
  * leftOpen / rightOpen：眼睛睜開程度（眼高/眼寬），用來偵測眨眼、閉眼時凍結游標。
  * devicePitch / deviceRoll：同一時刻的裝置姿勢（弧度，旋轉向量）；NaN = 當時沒有感測器資料。
  * ambientLux：同一時刻的環境光（lux，光感測器）；NaN = 當時沒有感測器資料。
+ * 它是連續光模型輸入：擷取時換算成光特徵寫入特徵向量（索引 22–24），
+ * 執行期每幀重新量測、重新餵給模型（見 GazeFeatureExtractor 的光特徵契約）。
  * eyeMeanLum / eyeContrast / specularRatio：同一時刻的眼部影像度量（裝置端即時量測的數字，
  * 不含影像）；NaN = 當時沒有影像度量（例如幀槽已被新幀覆寫）。只做信心判斷與診斷記錄，
- * 不進 22 維特徵（特徵契約不變）。
+ * 不進特徵向量（影像度量不進模型；環境光才進，見上）。
  * 預測時只用「與校正時的變化量」，不拿絕對角度當特徵（見 GazeModel）。
+ * 光特徵例外：光是連續模型輸入，以絕對 log 尺度置中，不取與校正時的差值。
  */
 data class GazeSample(
     val features: DoubleArray,
@@ -48,6 +51,9 @@ enum class FaceTurn {
  * 核心想法：虹膜中心在「眼眶座標系」內的相對位置，隨視線方向線性變化；
  * 再加上鼻尖位置與兩眼間距（頭部平移/遠近的代理變數），
  * 交給校正階段學出的線性模型去對應螢幕座標。
+ * 光線是連續模型輸入：每幀的環境光（log 尺度）與其和雙眼平均虹膜位置的
+ * 交互項一併進特徵向量（索引 22–24），模型在多光源校正資料上學到光效應，
+ * 執行期每幀重新量測、絕不以固定值打發（見 docs/light-robust-gaze-design.md）。
  */
 object GazeFeatureExtractor {
     // MediaPipe FaceMesh 標準索引
@@ -63,13 +69,47 @@ object GazeFeatureExtractor {
     private const val R_EYE_BOTTOM = 374
     private const val NOSE_TIP = 1
 
-    /** 特徵維度（含偏置項），校正與推論兩端共用。 */
-    const val DIM = 22
+    /** 特徵維度（含偏置項與光特徵），校正與推論兩端共用。v3 契約：25 維。 */
+    const val DIM = 25
+
+    /** log10(lux) 的絕對夾取範圍：1 lux 至 100,000 lux；中心 100 lux。 */
+    const val LOG_LUX_MIN = 0.0
+    const val LOG_LUX_MAX = 5.0
+    const val LIGHT_CENTER_LOG = 2.0
+
+    /** 光特徵在特徵向量中的起始索引：22 主效應、23／24 與雙眼平均虹膜位置的交互項。 */
+    const val LIGHT_FEATURE_START = 22
+
+    /**
+     * 感測器 lux → log10(lux)。無效（NaN／負值）回 NaN，呼叫端不得用 0 假裝量到；
+     * lux <= 0 時取對數下限（全黑），不產生 -Infinity。
+     */
+    fun lightLogLux(ambientLux: Float): Double {
+        if (!ambientLux.isFinite() || ambientLux < 0f) return Double.NaN
+        if (ambientLux <= 0f) return LOG_LUX_MIN
+        return kotlin.math.log10(ambientLux.toDouble())
+    }
+
+    /**
+     * log10(lux) → 置中光特徵：夾取到絕對範圍後減中心。無效輸入回 0.0（中心值），
+     * 即「平均光線」——文件化的中性行為，不是靜默忽略（見設計文件 §2.4）。
+     */
+    fun lightCentered(logLux: Double): Double {
+        if (!logLux.isFinite()) return 0.0
+        return logLux.coerceIn(LOG_LUX_MIN, LOG_LUX_MAX) - LIGHT_CENTER_LOG
+    }
+
+    /** 光特徵三元組：主效應＋與雙眼平均虹膜位置的交互項。 */
+    fun lightFeatures(logLux: Double, avgIrisXRot: Double, avgIrisYRot: Double): DoubleArray {
+        val c = lightCentered(logLux)
+        return doubleArrayOf(c, c * avgIrisXRot, c * avgIrisYRot)
+    }
 
     fun extract(
         lm: List<NormalizedLandmark>,
         timestampMs: Long,
         refinedIris: RefinedIris? = null,
+        ambientLux: Float = Float.NaN,
     ): GazeSample? {
         if (lm.size <= R_IRIS) return null
 
@@ -138,6 +178,11 @@ object GazeFeatureExtractor {
         val leftOpen = dist(L_EYE_TOP, L_EYE_BOTTOM) / lW
         val rightOpen = dist(R_EYE_TOP, R_EYE_BOTTOM) / rW
 
+        // 連續光特徵（v3 契約）：每幀的環境光以 log 尺度置中後寫入，
+        // 另與雙眼平均虹膜位置相乘成交互項，讓模型學到光線造成的增益變化。
+        // lux 無效時 lightCentered 回中心值 0（見上），不以 0 lux 假裝全黑。
+        val light = lightFeatures(lightLogLux(ambientLux), avgIrisXRot, avgIrisYRot)
+
         val features = doubleArrayOf(
             lIrisXRot, lIrisYRot, rIrisXRot, rIrisYRot,
             eyeHeadXRot, eyeHeadYRot, iod,
@@ -148,6 +193,7 @@ object GazeFeatureExtractor {
             iodSq, rollSq,
             leftOpen, rightOpen,
             1.0, // 偏置項
+            light[0], light[1], light[2], // 連續光特徵（索引 22–24）
         )
 
         return GazeSample(features, leftOpen, rightOpen, timestampMs)

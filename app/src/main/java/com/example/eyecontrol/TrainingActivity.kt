@@ -440,10 +440,12 @@ class TrainingActivity : AppCompatActivity() {
         val m = model ?: return
         val w = view.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
         val h = view.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels
+        // 連續光輸入：與服務主路徑相同，每幀的當前 lux 餵給模型。
         val (rawX, rawY) = m.predict(
             sample.features, w, h,
             sample.devicePitch, sample.deviceRoll,
             settings.gyroCompensation, settings.distanceCompensation,
+            logLux = GazeFeatureExtractor.lightLogLux(sample.ambientLux),
         )
         val t = sample.timestampMs / 1000.0
         val x = filterX.filter(rawX, t).toFloat().coerceIn(0f, w - 1f)

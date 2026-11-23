@@ -1,5 +1,7 @@
 # EyeControl 架構圖（STEP 1 盤點，擴充 engineering-baseline.md）
 
+> 2026-11-23 增補（review 樹，未合併／未推送）：特徵契約已由授權變更為 25 維（`MODEL_VERSION` 2→3；新增連續光特徵 f[22..24]，舊模型強制重校）；光線改為連續模型輸入、多光源校正；`ConditionHistory` 的 lux 維度退出歷史修正。詳見 `docs/light-robust-gaze-design.md`。本文以下所寫「22 維」皆指變更前的狀態，原文不改。
+
 > 性質：STEP 1 盤點文件。**只讀取程式碼、只新增本文件，未修改任何程式碼、版本號、workflow。**
 > 工作樹：`~/workspace/eyecontrol-p3`（repo 複本，無 `.git/`；遠端 main HEAD `c6b80964`、v0.5.9，
 > 加上未推送的 Phase 3 實作；`versionCode = 13`、`versionName = "0.5.9"`）。

@@ -90,19 +90,20 @@ Android 手機的開源無障礙原型系統。視線推算的影像處理在裝
 前鏡頭 (CameraX, 1280×720)
   → MediaPipe Face Landmarker（478 臉部關鍵點，含虹膜）
   → EyeImageMetrics：眼部影像度量（亮度／對比／反光，裝置端即時量測、只產出數字）
-  → GazeFeatureExtractor：22 維視線特徵（見下；虹膜影像精修為實驗選項，預設關）
+  → GazeFeatureExtractor：25 維視線特徵（含連續光特徵，見下；虹膜影像精修為實驗選項，預設關）
   → GazeModel：9 點校正訓練的嶺回歸，特徵 → 螢幕座標，頭部姿態補償共訓
   → OneEuroFilter：平滑去抖動（停留時自動加強平滑）
   → DwellTracker：自適應停留判定（錨點跟漂、進度衰減、低速幀累積）
   → GazeAccessibilityService：覆蓋層游標 + 凝視停留／眨眼觸發 dispatchGesture
 ```
 
-**22 維特徵**（`GazeFeatureExtractor`，全部以眼寬／眼距正規化，對距離變化不敏感）：
+**25 維特徵**（`GazeFeatureExtractor`，全部以眼寬／眼距正規化，對距離變化不敏感）：
 
 - 雙眼虹膜在眼眶座標系內的相對位置（經轉頭 roll 旋轉回正，具轉頭不變性）
 - 頭部姿態代理：pitch／yaw／roll（由鼻尖與兩眼連線推算）
 - 眼睛–頭部交互項與二階項（pitch²、yaw²、pitch·yaw），捕捉頭轉時的非線性響應
 - 雙眼平均、雙眼差分（輻輳）、眼距及其平方、眼睛睜開程度（眨眼偵測用）
+- 連續光特徵（f[22..24]）：環境光 log 值及其與雙眼平均虹膜位置的交互項；由多光源校正學出，執行期每幀餵入當前 lux，不以固定值或分桶打發（見 `docs/light-robust-gaze-design.md`）
 
 **模型**（`GazeModel`）：兩組嶺回歸權重（x、y 各一），以高斯消去法解正規方程；
 頭部姿態補償係數 kx、ky 與權重一起訓練、限制在 -3.0–3.0（符號由校正資料決定，不預設方向；v0.4.1 修正：舊版強制正值會把垂直補償算反、游標被壓向中下方）。
@@ -121,11 +122,11 @@ Android 手機的開源無障礙原型系統。視線推算的影像處理在裝
 | 檔案 | 職責 |
 |------|------|
 | `FaceTrackerEngine.kt` | 前鏡頭串流 → MediaPipe → GazeSample（校正頁與服務共用） |
-| `GazeFeatureExtractor.kt` | 臉部關鍵點 → 22 維視線特徵向量 |
+| `GazeFeatureExtractor.kt` | 臉部關鍵點 → 25 維視線特徵向量（含連續光特徵） |
 | `GazeModel.kt` | 嶺回歸訓練／預測／存檔（含頭部姿態、裝置角度、臉距幾何修正） |
 | `DeviceOrientationTracker.kt` | 旋轉向量感測器讀取＋平滑，供每幀樣本附上裝置角度 |
 | `UpdateChecker.kt` | App 內更新：查最新 release、一鍵下載、跳安裝畫面（FileProvider） |
-| `GazeEvaluator.kt` | 校正品質評估：逐點誤差、留一法交叉驗證（純函數） |
+| `GazeEvaluator.kt` | 校正品質評估：逐點誤差、留一法／留一輪交叉驗證（純函數） |
 | `GazeSettings.kt` | 使用者可調參數的單一來源（SharedPreferences，含範圍驗證） |
 | `SettingsActivity.kt` | 參數設定頁（滑桿調整、儲存後即時生效） |
 | `CalibrationStore.kt` | 情境校正設定檔：三情境模型存取、使用中情境、舊版單一模型遷移 |

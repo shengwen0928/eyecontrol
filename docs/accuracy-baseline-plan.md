@@ -157,7 +157,7 @@
 |---|---|---|---|---|
 | L1 | Camera Frame（相機幀延遲） | 相機幀曝光／送入 `ImageAnalysis` → 該幀到達 `FaceTrackerEngine.analyze` 可處理 | ms（中位數＋P90） | 尚未驗證 |
 | L2 | Face Landmark（臉部特徵點延遲） | 幀送入 MediaPipe Face Landmarker → 回傳臉部特徵點結果（`GazeSample` 產生前） | ms（中位數＋P90） | 尚未驗證 |
-| L3 | Gaze Estimation（視線估計延遲） | 特徵萃取（22 維）開始 → `GazeModel.predict` 產出原始預測點 | ms（中位數＋P90） | 尚未驗證 |
+| L3 | Gaze Estimation（視線估計延遲） | 特徵萃取（25 維，含連續光特徵）開始 → `GazeModel.predict` 產出原始預測點 | ms（中位數＋P90） | 尚未驗證 |
 | L4 | Cursor Update（游標更新延遲） | 原始預測點 → 經 `OneEuroFilter`／靈敏度／修正偏移後，游標 overlay 位置更新 | ms（中位數＋P90） | 尚未驗證 |
 | L5 | Gesture Dispatch（手勢派發延遲） | 判決觸發條件滿足（dwell 滿／邊緣確認完成）→ `dispatchGesture`／`perform*` 發出無障礙手勢請求 | ms（中位數＋P90） | 尚未驗證 |
 | L6 | End-to-End（端到端延遲） | 受測者視線到達目標 → 螢幕上可見的動作結果（點擊生效／捲動發生）。L6 含使用者 dwell 時間與系統延遲，須分開記錄「dwell 設定值」與「dwell 外延遲」，不得把 dwell 時間當作系統延遲 | ms（中位數＋P90） | 尚未驗證 |

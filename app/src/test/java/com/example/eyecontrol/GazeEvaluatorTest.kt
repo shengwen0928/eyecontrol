@@ -7,8 +7,9 @@ import org.junit.Test
 /**
  * 校正品質評估純邏輯測試（STEP 4）：GazeEvaluator 的分組、空輸入與
  * 留一交叉驗證。合成資料沿用 GazeModelMathTest 的同一線性關係與
- * 22 維建構方式（f[0]=u、f[1]=v、f[6]=iod、f[21]=偏置），不改模型
+ * 25 維建構方式（f[0]=u、f[1]=v、f[6]=iod、f[21]=偏置、f[22..24]=光特徵），不改模型
  * 演算法、不發明門檻；等級門檻 60／120／200 px 不在本測試判定範圍。
+ * 留一輪測試所用資料皆為合成資料（標示 synthetic），只驗數學契約。
  */
 class GazeEvaluatorTest {
 
@@ -118,6 +119,103 @@ class GazeEvaluatorTest {
         val inSample = GazeEvaluator.evaluate(model, features, targets, 1080, 2400)
             .inSampleMeanErrorPx
         val err = GazeEvaluator.leaveOnePointOut(features, targets, 1080, 2400)
+        assertTrue(err.isFinite())
+        assertTrue(inSample.isFinite())
+        assertTrue(err > inSample)
+    }
+
+    // ---- 留一輪交叉驗證（多光源校正）：以下皆為合成資料，只驗數學契約 ----
+
+    private fun twoPassData(): Triple<List<DoubleArray>, List<Pair<Float, Float>>, List<Int>> {
+        // 兩輪：每輪 9 點（3×3 目標網格），光線相同（c=0），目標為同一線性關係。
+        val features = mutableListOf<DoubleArray>()
+        val targets = mutableListOf<Pair<Float, Float>>()
+        val passIds = mutableListOf<Int>()
+        for (pass in 0..1) {
+            for (i in 0 until 9) {
+                val u = (i % 3 - 1) / 2.0
+                val v = (i / 3 - 1) / 2.0
+                val f = featureVector(u, v)
+                f[22] = 0.0
+                f[23] = 0.0
+                f[24] = 0.0
+                features.add(f)
+                targets.add((540.0 + 800.0 * u).toFloat() to (1200.0 + 800.0 * v).toFloat())
+                passIds.add(pass)
+            }
+        }
+        return Triple(features, targets, passIds)
+    }
+
+    @Test
+    fun leaveOnePassOut_singlePass_returnsNaN() {
+        val (features, targets, _) = twoPassData()
+        val singlePass = List(9) { 0 }
+        assertTrue(
+            GazeEvaluator.leaveOnePassOut(
+                features.take(9), targets.take(9), singlePass, 1080, 2400,
+            ).isNaN(),
+        )
+    }
+
+    @Test
+    fun leaveOnePassOut_emptyOrMismatched_returnsNaN() {
+        assertTrue(
+            GazeEvaluator.leaveOnePassOut(emptyList(), emptyList(), emptyList(), 1080, 2400)
+                .isNaN(),
+        )
+        val (features, targets, passIds) = twoPassData()
+        assertTrue(
+            GazeEvaluator.leaveOnePassOut(features, targets, passIds.drop(1), 1080, 2400)
+                .isNaN(),
+        )
+    }
+
+    @Test
+    fun leaveOnePassOut_twoPassesSameLight_finite() {
+        val (features, targets, passIds) = twoPassData()
+        val err = GazeEvaluator.leaveOnePassOut(features, targets, passIds, 1080, 2400)
+        assertTrue(err.isFinite())
+        assertTrue(err >= 0.0)
+    }
+
+    @Test
+    fun leaveOnePassOut_unseenLight_morePessimisticThanInSample_synthetic() {
+        // 合成資料：目標依賴光線 c；兩輪光線不同（c=-1 與 c=+1）。
+        // 留一輪時被留出的光線完全沒參與訓練，誤差應比訓練集內誤差更悲觀
+        // （相對關係斷言，不發明 px 門檻）。
+        val features = mutableListOf<DoubleArray>()
+        val targets = mutableListOf<Pair<Float, Float>>()
+        val passIds = mutableListOf<Int>()
+        val luxLogs = mutableListOf<Double>()
+        for ((pass, c) in listOf(0 to -1.0, 1 to 1.0)) {
+            for (i in 0 until 9) {
+                val u = (i % 3 - 1) / 2.0
+                val v = (i / 3 - 1) / 2.0
+                val f = featureVector(u, v)
+                f[13] = u
+                f[14] = v
+                f[22] = c
+                f[23] = c * u
+                f[24] = c * v
+                features.add(f)
+                targets.add(
+                    (540.0 + 800.0 * u + 150.0 * c).toFloat() to
+                        (1200.0 + 800.0 * v).toFloat(),
+                )
+                passIds.add(pass)
+                luxLogs.add(c + 2.0)
+            }
+        }
+        val model = GazeModel.train(
+            features, targets, screenW = 1080.0, screenH = 2400.0,
+            lightLogLux = luxLogs,
+        )
+        val inSample = GazeEvaluator.evaluate(model, features, targets, 1080, 2400)
+            .inSampleMeanErrorPx
+        val err = GazeEvaluator.leaveOnePassOut(
+            features, targets, passIds, 1080, 2400, lightLogLux = luxLogs,
+        )
         assertTrue(err.isFinite())
         assertTrue(inSample.isFinite())
         assertTrue(err > inSample)

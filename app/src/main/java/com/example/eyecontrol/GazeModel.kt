@@ -6,8 +6,11 @@ import org.json.JSONObject
 
 /**
  * 視線 → 螢幕座標的線性回歸模型（兩組權重：x 與 y 各一）。
- * 校正時以嶺回歸（ridge regression）解正規方程訓練；特徵 22 維，
- * 9 點 × 數十樣本的資料量下解 23×23 線性系統（22 維特徵 + 1 維姿態補償項）即可，不需要任何 ML 框架。
+ * 校正時以嶺回歸（ridge regression）解正規方程訓練；特徵 25 維，
+ * 9 點 × 數十樣本的資料量下解 26×26 線性系統（25 維特徵 + 1 維姿態補償項）即可，不需要任何 ML 框架。
+ * 特徵 22–24 為連續光特徵（log lux 置中值及其與雙眼平均虹膜位置的交互項），
+ * 由多光源校正資料學出；執行期每幀以當前 lux 重新計算並夾取到訓練跨度內
+ * （見 predict 的 logLux 參數與設計文件 docs/light-robust-gaze-design.md）。
  *
  * 幾何修正（全部只吃「相對於校正時」的變化量，避免與臉轉向補償重複計算）：
  * 臉轉向——特徵 7/8 的帶符號差值 × kx/ky，訓練時聯合學出；
@@ -15,6 +18,8 @@ import org.json.JSONObject
  * 臉遠近——特徵 6（iod，臉距倒數的代理）的比值，繞螢幕中心等比縮放。
  * 裝置與臉距修正不靠訓練資料學係數（校正時裝置不動、臉距固定，學不出來），
  * 只靠校正基準＋幾何關係；舊模型沒有基準時修正自動關閉，重校後才生效。
+ * 光特徵例外：光以絕對 log 尺度進模型，不取與校正時的差值——光線連續變化，
+ * 模型必須在每個光線下都成立，不得以單一校正光線為基準。
  */
 class GazeModel(
     private val wx: DoubleArray,
@@ -28,6 +33,10 @@ class GazeModel(
     var deviceBaseRoll: Double? = null,
     /** 校正時臉距基準（特徵 6 iod 的平均）；<= 0 = 舊模型、無基準，臉距修正關閉。 */
     var baseIod: Double = 0.0,
+    /** 訓練集 log10(lux) 的實際跨度：執行期 lux 夾取到此範圍內再進模型，範圍外
+     * 不丟光特徵、取邊界效應（見 predict）。預設為絕對範圍，僅防禦性用途。 */
+    var lightMinLog: Double = GazeFeatureExtractor.LOG_LUX_MIN,
+    var lightMaxLog: Double = GazeFeatureExtractor.LOG_LUX_MAX,
 ) {
 
     /**
@@ -35,6 +44,9 @@ class GazeModel(
      * devicePitch / deviceRoll 為 NaN（無感測器資料）或開關關閉時，對應修正自動跳過。
      * headPoseCompensation=false 時跳過 kx/ky 幾何項、只輸出 ridge 映射（對照實驗用；
      * 預設 true，現有呼叫端行為不變）。
+     * logLux：當前 log10(lux)（連續光輸入）。有限時以訓練跨度夾取後重算光特徵
+     * f[22..24] 再預測——範圍外取邊界效應，絕不丟掉光特徵；NaN 時（評估器路徑、
+     * 無感測器資料）沿用特徵陣列內建的光值。呼叫端傳入的陣列絕不被修改。
      */
     fun predict(
         f: DoubleArray,
@@ -45,20 +57,35 @@ class GazeModel(
         gyroCompensation: Boolean = true,
         distanceCompensation: Boolean = true,
         headPoseCompensation: Boolean = true,
+        logLux: Double = Double.NaN,
     ): Pair<Double, Double> {
         // 特徵不足時直接失敗，不要讓 f[7]/f[8] 拋出難懂的越界錯誤
         require(f.size >= 9) { "特徵維度不足：需要至少 9 維，實際 ${f.size} 維" }
+        // 連續光輸入：以訓練跨度夾取後重算光特徵，寫入複製的陣列；
+        // 特徵不足 25 維時無光欄位可寫，沿用原陣列（舊陣列相容路徑）。
+        val fUse = if (logLux.isFinite() && f.size >= GazeFeatureExtractor.DIM) {
+            val copy = f.copyOf()
+            val clamped = logLux.coerceIn(lightMinLog, lightMaxLog)
+            val light = GazeFeatureExtractor.lightFeatures(clamped, f[13], f[14])
+            val start = GazeFeatureExtractor.LIGHT_FEATURE_START
+            copy[start] = light[0]
+            copy[start + 1] = light[1]
+            copy[start + 2] = light[2]
+            copy
+        } else {
+            f
+        }
         var px = 0.0
         var py = 0.0
-        for (i in f.indices) {
-            px += wx[i] * f[i]
-            py += wy[i] * f[i]
+        for (i in fUse.indices) {
+            px += wx[i] * fUse[i]
+            py += wy[i] * fUse[i]
         }
 
         // 頭部姿態補償 (Head pose compensation)：headPoseCompensation=false 時跳過，
         // 只輸出 ridge 映射（對照實驗用，見 docs/head-pose-compensation-experiment.md）。
-        val curPitch = f[7]
-        val curYaw = f[8]
+        val curPitch = fUse[7]
+        val curYaw = fUse[8]
         val deltaPitch = curPitch - basePitch
         val deltaYaw = curYaw - baseYaw
 
@@ -88,8 +115,8 @@ class GazeModel(
 
         // 臉距縮放：iod 與距離成反比；臉靠近（iod 變大）時同一眼球轉角覆蓋的螢幕距離變小，
         // 故繞螢幕中心等比縮小偏移量；臉遠離時反之。只吃與校正基準的比值。
-        if (distanceCompensation && baseIod > 0.0 && f.size > 6 && f[6] > 0.0) {
-            val scale = (baseIod / f[6]).coerceIn(MIN_DISTANCE_SCALE, MAX_DISTANCE_SCALE)
+        if (distanceCompensation && baseIod > 0.0 && fUse.size > 6 && fUse[6] > 0.0) {
+            val scale = (baseIod / fUse[6]).coerceIn(MIN_DISTANCE_SCALE, MAX_DISTANCE_SCALE)
             val cx = screenW / 2.0
             val cy = screenH / 2.0
             outX = cx + (outX - cx) * scale
@@ -109,6 +136,8 @@ class GazeModel(
             put("kx", kx)
             put("ky", ky)
             put("baseIod", baseIod)
+            put("lightMinLog", lightMinLog)
+            put("lightMaxLog", lightMaxLog)
             deviceBasePitch?.let { put("deviceBasePitch", it) }
             deviceBaseRoll?.let { put("deviceBaseRoll", it) }
             put("version", MODEL_VERSION)
@@ -128,8 +157,17 @@ class GazeModel(
          * 模型存檔格式版本。特徵定義或存檔欄位改變時遞增；
          * 舊版存檔（無 version 欄位）與版本不符者皆視為未校正（須重校，避免靜默誤用舊格式模型）。
          * v2：kx/ky 改以正負範圍學習（符號由校正資料決定），v1 模型一律重校。
+         * v3：特徵 22 維 → 25 維（新增連續光特徵 f[22..24]）＋光跨度欄位，
+         * v2 模型一律重校（授權的契約變更，見 docs/light-robust-gaze-design.md §6）。
          */
-        private const val MODEL_VERSION = 2
+        private const val MODEL_VERSION = 3
+
+        /**
+         * 版本相容判定（純函數，單元測試不碰 org.json stub 也能驗）：
+         * 只有版本號與權重維度同時符合才算可用模型。
+         */
+        fun isCompatibleVersion(version: Int, weightSize: Int): Boolean =
+            version == MODEL_VERSION && weightSize == GazeFeatureExtractor.DIM
 
         private fun prefs(context: Context) =
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -154,12 +192,19 @@ class GazeModel(
                 val deviceBaseRollVal = json.optDouble("deviceBaseRoll", Double.NaN)
                     .takeIf { it.isFinite() }
                 val baseIodVal = json.optDouble("baseIod", 0.0)
+                val lightMinVal = json.optDouble(
+                    "lightMinLog", GazeFeatureExtractor.LOG_LUX_MIN,
+                )
+                val lightMaxVal = json.optDouble(
+                    "lightMaxLog", GazeFeatureExtractor.LOG_LUX_MAX,
+                )
                 val m = GazeModel(
                     wxArr, wyArr, basePitchVal, baseYawVal, kxVal, kyVal,
                     deviceBasePitchVal, deviceBaseRollVal, baseIodVal,
+                    lightMinVal, lightMaxVal,
                 )
                 // 版本不符或特徵維度不符，視為未校正（避免靜默誤用舊格式模型）
-                if (version != MODEL_VERSION || m.wx.size != GazeFeatureExtractor.DIM) null else m
+                if (!isCompatibleVersion(version, m.wx.size)) null else m
             }.getOrNull()
         }
 
@@ -176,6 +221,8 @@ class GazeModel(
          * @param targets  對應的螢幕座標（像素）
          * @param screenW  螢幕寬（像素）；呼叫端已知時傳入，否則由目標座標最大值估算
          * @param screenH  螢幕高（像素）；呼叫端已知時傳入，否則由目標座標最大值估算
+         * @param lightLogLux 與 features 平行的每筆 log10(lux)（NaN = 當時無感測器資料）；
+         * 傳入時用它算光跨度（精確），不傳時由特徵 f[22] 還原。
          */
         fun train(
             features: List<DoubleArray>,
@@ -185,6 +232,7 @@ class GazeModel(
             screenH: Double? = null,
             deviceBasePitch: Double? = null,
             deviceBaseRoll: Double? = null,
+            lightLogLux: List<Double>? = null,
         ): GazeModel {
             require(features.isNotEmpty() && features.size == targets.size)
             val d = features[0].size // 22
@@ -268,10 +316,38 @@ class GazeModel(
             // 看上面要把眼球往上翻到底才夠得到（v0.4.1 修正）。
             val ky = solY[d].coerceIn(-3.0, 3.0) // 限制補償範圍以確保穩定
 
+            val lightSpan = computeLightSpan(features, lightLogLux)
             return GazeModel(
                 wx, wy, basePitch, baseYaw, kx, ky,
                 deviceBasePitch, deviceBaseRoll, baseIod,
+                lightSpan.first, lightSpan.second,
             )
+        }
+
+        /**
+         * 訓練集光跨度（log10 lux 的最小–最大值）：呼叫端有平行 lux 記錄時
+         * 以它為準（NaN 樣本不計）；否則由特徵 f[22] 還原
+         *（f[22] = logLux − 中心值）；特徵不足 25 維時無光資訊，取絕對範圍。
+         * 跨度退化（最小＝最大，例如全程同一光線或全程無感測器）時，
+         * 執行期 lux 夾取到該單一值，光特徵恆為訓練時的值——行為一致，
+         * 由校正報告誠實列出跨度，不靜默假裝跨過光線範圍。
+         */
+        private fun computeLightSpan(
+            features: List<DoubleArray>,
+            lightLogLux: List<Double>?,
+        ): Pair<Double, Double> {
+            val finite = lightLogLux
+                ?.filterIndexed { i, v -> i < features.size && v.isFinite() }
+                ?: emptyList()
+            if (finite.isNotEmpty()) {
+                return finite.min() to finite.max()
+            }
+            val start = GazeFeatureExtractor.LIGHT_FEATURE_START
+            if (features.isNotEmpty() && features[0].size > start) {
+                val logs = features.map { it[start] + GazeFeatureExtractor.LIGHT_CENTER_LOG }
+                return logs.min() to logs.max()
+            }
+            return GazeFeatureExtractor.LOG_LUX_MIN to GazeFeatureExtractor.LOG_LUX_MAX
         }
 
         /** 裝置角度修正的變化量上限（弧度）：超過視為劇烈晃動，不再放大修正。 */

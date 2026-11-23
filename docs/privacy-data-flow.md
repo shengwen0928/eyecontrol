@@ -1,5 +1,7 @@
 # EyeControl 隱私與資料流盤點（PHASE 5 K-12）
 
+> 2026-11-23 增補（review 樹，未合併／未推送）：特徵契約已由授權變更為 25 維（`MODEL_VERSION` 2→3；新增連續光特徵 f[22..24]，舊模型強制重校）；光線改為連續模型輸入、多光源校正；`ConditionHistory` 的 lux 維度退出歷史修正。詳見 `docs/light-robust-gaze-design.md`。本變更不改變任何上傳面（特徵向量從不上傳；診斷 CSV 欄位不變）。本文以下「22 維」字樣已就 §2.3 與總表兩處改為 25 維，其餘歷史敘述原文不改。
+
 > 性質：唯讀稽核文件，只新增本文件，不改任何程式碼、文案、版本號與 workflow。
 > 基線：`~/workspace/eyecontrol-p3`（v0.5.9 加未推送的 Phase 3 實作；遠端 main HEAD `c6b80964`；
 > `app/build.gradle.kts`：`versionCode = 13`、`versionName = "0.5.9"`）。
@@ -62,7 +64,7 @@
 | 1 | 相機影像（全幀 Bitmap） | 是（見例外 1b） | 否（全幀） | 否（全幀） | — |
 | 1b | 眼區驗證裁切（雙眼聯集 JPEG） | 否 | 是 | 是（側載＋兩開關開著時） | 見 §2.1 |
 | 2 | Face Landmarker 輸出（臉部關鍵點） | 是 | 否 | 否 | — |
-| 3 | 眼部特徵與感測器快照（22 維＋角度／亮度／影像度量） | 是（見例外：部分數值進 CSV） | 是（僅 CSV 欄位值） | 是（僅 CSV 欄位值，條件同 §2.7） | 見 §2.3 |
+| 3 | 眼部特徵與感測器快照（25 維，含連續光特徵＋角度／亮度／影像度量） | 是（見例外：部分數值進 CSV） | 是（僅 CSV 欄位值） | 是（僅 CSV 欄位值，條件同 §2.7） | 見 §2.3 |
 | 4 | 視線預測與游標座標（原始／放大／濾波後） | 是（見例外：部分數值進 CSV） | 是（僅 CSV 欄位值） | 是（僅 CSV 欄位值，條件同 §2.7） | 見 §2.4 |
 | 5 | 校正資料（模型權重＋中繼資料＋校正中暫存） | 是 | 是（SharedPreferences） | 否 | — |
 | 6 | 使用者設定（`gaze_settings` 等 6 份 prefs） | 是 | 是（SharedPreferences） | 否（程式不送出；備份面見 §6） | — |
@@ -149,8 +151,8 @@
 
 ### 2.3 眼部特徵與感測器快照
 
-- 內容：`GazeFeatureExtractor.extract()`（`GazeFeatureExtractor.kt:69`，`DIM = 22`，
-  `:67`）產出的 22 維特徵向量；每幀另附感測器快照
+- 內容：`GazeFeatureExtractor.extract()`（`GazeFeatureExtractor.kt:69`，`DIM = 25`，
+  `:67`）產出的 25 維特徵向量（含連續光特徵 f[22..24]，由 `ambientLux` 換算）；每幀另附感測器快照
   （`devicePitch／deviceRoll`、`ambientLux`，`FaceTrackerEngine.kt:171-178`）
   與影像度量（`eyeMeanLum／eyeContrast／specularRatio`，同處）。
   感測器來源：`DeviceOrientationTracker`（旋轉向量）與 `LightSensorTracker`
