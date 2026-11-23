@@ -32,13 +32,21 @@ class CalibLogTest {
     )
 
     @Test
-    fun header_has35Columns() {
+    fun header_has51Columns() {
         val cols = CalibLog.header().split(',')
-        assertEquals(35, cols.size)
+        assertEquals(51, cols.size)
         assertEquals("pass", cols[0])
         assertEquals("kept", cols[6])
         assertEquals("f0", cols[10])
         assertEquals("f24", cols[34])
+        assertEquals("wallMs", cols[35])
+        assertEquals("luxRaw", cols[36])
+        assertEquals("leftOpen", cols[37])
+        assertEquals("specularRatio", cols[41])
+        assertEquals("rawPitch", cols[42])
+        assertEquals("rvW", cols[48])
+        assertEquals("predX", cols[49])
+        assertEquals("predY", cols[50])
     }
 
     @Test
@@ -49,6 +57,7 @@ class CalibLogTest {
         val lines = csv.trim().split('\n')
         assertEquals(3, lines.size)
         val c0 = lines[1].split(',')
+        assertEquals(51, c0.size)
         assertEquals("0", c0[0])
         assertEquals("0", c0[2])
         assertEquals("1", c0[6])
@@ -59,6 +68,34 @@ class CalibLogTest {
         assertEquals("-0.050", c0[9])
         assertEquals("0.000", c0[10])
         assertEquals("0.240", c0[34])
+        // 診斷擴充欄預設：wallMs 為 0 記空欄，其餘 NaN 記空欄。
+        assertEquals("", c0[35])
+        assertEquals("", c0[36])
+        assertEquals("", c0[49])
+        assertEquals("", c0[50])
+    }
+
+    @Test
+    fun buildCsv_extendedFields() {
+        val r = row(idx = 0, tMs = 0L, kept = true).copy(
+            wallMs = 1795445697026L,
+            luxRaw = 2.5,
+            leftOpen = 0.32,
+            rightOpen = 0.31,
+            rawPitch = -0.98,
+            rvW = 0.99,
+            predX = 100.5,
+            predY = 200.5,
+        )
+        val c = CalibLog.buildCsv(listOf(r)).trim().split('\n')[1].split(',')
+        assertEquals("1795445697026", c[35])
+        assertEquals("2.500", c[36])
+        assertEquals("0.320", c[37])
+        assertEquals("0.310", c[38])
+        assertEquals("-0.980", c[42])
+        assertEquals("0.990", c[48])
+        assertEquals("100.500", c[49])
+        assertEquals("200.500", c[50])
     }
 
     @Test
@@ -131,5 +168,35 @@ class CalibLogTest {
         assertTrue(json.contains("\"separationThreshold\":2.000"))
         assertTrue(json.contains("\"separation\":0.030"))
         assertTrue(json.contains("\"separationMin\":0.040"))
+        assertTrue(json.contains("\"droppedFaceLost\":[]"))
+        assertTrue(json.contains("\"droppedBlink\":[]"))
+    }
+
+    @Test
+    fun buildSummaryJson_droppedArrays() {
+        val json = CalibLog.buildSummaryJson(
+            profileId = "sitting",
+            passCount = 1,
+            screenW = 1080,
+            screenH = 2400,
+            featureDim = 25,
+            inSampleErrorPx = 100.0,
+            looErrorPx = 200.0,
+            leavePassOutErrorPx = Double.NaN,
+            worstPointIndex = 0,
+            worstErrorPx = 150.0,
+            perPointErrors = listOf(100.0),
+            lightMinLux = 50.0,
+            lightMaxLux = 60.0,
+            lightMinLog = 1.0,
+            lightMaxLog = 2.0,
+            calibratedAtMs = 1L,
+            rowCount = 126,
+            keptRowCount = 90,
+            droppedFaceLostPerPoint = listOf(0, 3, 0, 0, 0, 0, 0, 0, 0),
+            droppedBlinkPerPoint = listOf(1, 0, 0, 0, 2, 0, 0, 0, 0),
+        )
+        assertTrue(json.contains("\"droppedFaceLost\":[0,3,0,0,0,0,0,0,0]"))
+        assertTrue(json.contains("\"droppedBlink\":[1,0,0,0,2,0,0,0,0]"))
     }
 }

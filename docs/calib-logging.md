@@ -9,14 +9,31 @@
 ## 格式
 
 - 樣本 CSV：id 首碼 `calib-`（例 `calib-sitting-2026-11-23_22-40-00-000-0`），
-  `rows` = 樣本筆數。表頭：
-  `pass,target,idx,tMs,targetX,targetY,kept,luxLog,devPitch,devRoll,f0,...,f24`。
+  `rows` = 樣本筆數。表頭（共 51 欄）：
+  `pass,target,idx,tMs,targetX,targetY,kept,luxLog,devPitch,devRoll,f0,...,f24,wallMs,luxRaw,leftOpen,rightOpen,eyeMeanLum,eyeContrast,specularRatio,rawPitch,rawRoll,rawYaw,rvX,rvY,rvZ,rvW,predX,predY`。
   每點「全部」原始樣本都記（含被離群值剔除的，`kept` 欄位標示 1／0）；
   `tMs` 相對本次校正首筆樣本；`luxLog` 為 log10(lux)，NaN 記空欄；
-  `devPitch`／`devRoll` 為裝置角度（弧度），NaN 記空欄；`f0..f24` 為 25 維特徵。
+  `devPitch`／`devRoll` 為裝置角度（弧度，經平滑），NaN 記空欄；`f0..f24` 為 25 維特徵。
+  診斷擴充欄：`wallMs` 絕對時間戳（毫秒）；`luxRaw` 原始 lux；`leftOpen`／`rightOpen`
+  睜眼程度；`eyeMeanLum`／`eyeContrast`／`specularRatio` 眼部影像度量；
+  `rawPitch`／`rawRoll`／`rawYaw` 未平滑原始 orientation；`rvX`／`rvY`／`rvZ`／`rvW`
+  旋轉向量原始分量；`predX`／`predY` 以新模型對該樣本的預測座標（與報告頁誤差
+  同一算法）。非有限值一律記空欄。
+  記不到的數字：臉部信心分數（MediaPipe 沒有提供）與生陀螺儀角速度（管線刻意
+  不用，見 DeviceOrientationTracker 說明）——這兩項管線裡不存在，不得假造。
+  安定等待期（settle）內跳過的影格不計入丟棄數。
 - 摘要 JSON：id 為樣本 id 加 `-sum`，`rows=0`，`csv` 欄位放 JSON，內容為報告頁
   同一批數字（訓練集／留一法／留一輪誤差、最差點、逐點誤差、光線範圍、模型光跨度、
-  筆數與留用筆數），非有限值記為 null。
+  筆數與留用筆數），非有限值記為 null；另含 `refused`／`separationRatio`／
+  `separationThreshold`／`separation`／`separationMin`（有效性檢查，見
+  docs/calibration-gate.md）與 `droppedFaceLost`／`droppedBlink`（每目標點採樣時
+  因臉遺失／眨眼閉眼丟棄的影格數，依 pointIndex 順序）。
+- 使用紀錄 gaze-（同一張表，`GazeLog`）：17 欄之外另記 `wallMs,mode,event,devPitch,
+  devRoll,rawPitch,rawRoll,rvX,rvY,rvZ,rvW,leftOpen,rightOpen,eyeMeanLum`（共 30 欄）；
+  `mode` 為當時操作模式，`event` 為動作事件（tap／double_tap／
+  long_press／swipe／swipe_start／edge_back／edge_home／edge_scroll_up／
+  edge_scroll_down／mode_change:XXX；動作派發時掛上，下一筆成功寫入的列才帶上
+  並清除，節流丟棄時保留不遺失），臉遺失列的裝置角度取服務端平滑值。
 
 ## 閘門（與游標紀錄同一語意）
 

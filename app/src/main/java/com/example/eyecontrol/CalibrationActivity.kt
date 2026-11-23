@@ -109,6 +109,32 @@ class CalibrationActivity : AppCompatActivity() {
     /** 與 pointBuffer 一一對應的相對時間（毫秒，相對本次校正首筆樣本），供逐筆紀錄分析跨輪與晃動。 */
     private val pointSampleTimes = mutableListOf<Long>()
 
+    /** 與 pointBuffer 一一對應的逐筆診斷欄位（絕對時間、原始 lux、睜眼、影像度量、原始感測器值）。 */
+    private data class SampleExtra(
+        val wallMs: Long,
+        val luxRaw: Double,
+        val leftOpen: Double,
+        val rightOpen: Double,
+        val eyeMeanLum: Double,
+        val eyeContrast: Double,
+        val specularRatio: Double,
+        val rawPitch: Double,
+        val rawRoll: Double,
+        val rawYaw: Double,
+        val rvX: Double,
+        val rvY: Double,
+        val rvZ: Double,
+        val rvW: Double,
+    )
+
+    private val pointSampleExtras = mutableListOf<SampleExtra>()
+
+    /** 本點採樣時丟棄的影格數（臉遺失／眨眼閉眼分開計）；commitPoint 時按目標累計進摘要。 */
+    private var pointDroppedFaceLost = 0
+    private var pointDroppedBlink = 0
+    private val droppedFaceLostByTarget = IntArray(9)
+    private val droppedBlinkByTarget = IntArray(9)
+
     /**
      * 校正逐筆紀錄（內部調校用）：每點全部原始樣本（含被離群值剔除的），附輪次、
      * 目標、相對時間、裝置角度與光線；存檔成功後經 [uploadCalibLog] 上傳。
@@ -394,6 +420,9 @@ class CalibrationActivity : AppCompatActivity() {
         pointDeviceAngles.clear()
         pointLightLogs.clear()
         pointSampleTimes.clear()
+        pointSampleExtras.clear()
+        pointDroppedFaceLost = 0
+        pointDroppedBlink = 0
         settleUntil = SystemClock.elapsedRealtime() + SETTLE_MS
         pointStartedAt = SystemClock.elapsedRealtime()
         val (x, y) = points[index]
@@ -421,6 +450,7 @@ class CalibrationActivity : AppCompatActivity() {
         val now = SystemClock.elapsedRealtime()
         if (sample == null) {
             // 臉遺失不再靜默：先在畫面提示，單點等太久就重採該點，避免無限卡住
+            pointDroppedFaceLost++
             if (!faceLostHintShown && lastValidSampleAt != 0L &&
                 now - lastValidSampleAt > FACE_LOST_HINT_MS
             ) {
@@ -439,6 +469,7 @@ class CalibrationActivity : AppCompatActivity() {
         // 眨眼/閉眼期間的樣本會污染訓練資料，丟棄；但逾時計時照走（否則
         // 持續閉眼會讓單點永遠等不到逾時詢問）。
         if (sample.leftOpen < blinkThreshold || sample.rightOpen < blinkThreshold) {
+            pointDroppedBlink++
             checkPointTimeout(now)
             return
         }
@@ -450,6 +481,24 @@ class CalibrationActivity : AppCompatActivity() {
         pointBuffer.add(sample.features)
         pointSampleTimes.add(now - calibT0Ms)
         pointDeviceAngles.add(sample.devicePitch to sample.deviceRoll)
+        pointSampleExtras.add(
+            SampleExtra(
+                wallMs = System.currentTimeMillis(),
+                luxRaw = sample.ambientLux.toDouble(),
+                leftOpen = sample.leftOpen,
+                rightOpen = sample.rightOpen,
+                eyeMeanLum = sample.eyeMeanLum,
+                eyeContrast = sample.eyeContrast,
+                specularRatio = sample.specularRatio,
+                rawPitch = sample.rawPitch,
+                rawRoll = sample.rawRoll,
+                rawYaw = sample.rawYaw,
+                rvX = sample.rvX,
+                rvY = sample.rvY,
+                rvZ = sample.rvZ,
+                rvW = sample.rvW,
+            ),
+        )
         // 光線與特徵平行記錄：剔除離群值時跟著同一批樣本走，永不脫鉤。
         pointLightLogs.add(GazeFeatureExtractor.lightLogLux(sample.ambientLux))
         view.showTarget(target.first, target.second,
@@ -775,6 +824,7 @@ class CalibrationActivity : AppCompatActivity() {
         // 逐筆紀錄：全部樣本都記（含被剔除的，kept 標示），供分析跨輪不一致
         // 與手機晃動——訓練集只留排序後的前 keep 筆，紀錄必須在剔除前取全量。
         for (i in pointBuffer.indices) {
+            val extra = pointSampleExtras[i]
             calibRows.add(
                 CalibLog.Row(
                     pass = passIndex,
@@ -788,9 +838,25 @@ class CalibrationActivity : AppCompatActivity() {
                     devicePitch = pointDeviceAngles[i].first,
                     deviceRoll = pointDeviceAngles[i].second,
                     features = pointBuffer[i],
+                    wallMs = extra.wallMs,
+                    luxRaw = extra.luxRaw,
+                    leftOpen = extra.leftOpen,
+                    rightOpen = extra.rightOpen,
+                    eyeMeanLum = extra.eyeMeanLum,
+                    eyeContrast = extra.eyeContrast,
+                    specularRatio = extra.specularRatio,
+                    rawPitch = extra.rawPitch,
+                    rawRoll = extra.rawRoll,
+                    rawYaw = extra.rawYaw,
+                    rvX = extra.rvX,
+                    rvY = extra.rvY,
+                    rvZ = extra.rvZ,
+                    rvW = extra.rvW,
                 ),
             )
         }
+        droppedFaceLostByTarget[pointIndex] += pointDroppedFaceLost
+        droppedBlinkByTarget[pointIndex] += pointDroppedBlink
         committedPoints++
         // 成功採樣即歸零：本點已完成，逾時計數不再累積。
         pointTimeoutCount = 0
@@ -824,6 +890,15 @@ class CalibrationActivity : AppCompatActivity() {
             deviceBasePitch = deviceBasePitch, deviceBaseRoll = deviceBaseRoll,
             lightLogLux = allLightLogs,
         )
+
+        // 逐筆預測值：以剛訓練好的新模型對每筆樣本預測，與報告頁誤差同一算法
+        // （GazeEvaluator.evaluate 的 predict 呼叫：不帶裝置角度與光線參數），
+        // 拒存時也照算——拒存紀錄的 pred 欄位是門檻複核的依據。
+        for (row in calibRows) {
+            val (px, py) = model.predict(row.features, screenW, screenH)
+            row.predX = px
+            row.predY = py
+        }
 
         // 訓練集誤差偏樂觀，只列出來參考；精度等級以留一法交叉驗證為準。
         // 多光源校正另算留一輪交叉驗證：等級取兩種留一法中較差者——
@@ -870,6 +945,8 @@ class CalibrationActivity : AppCompatActivity() {
                 separationThreshold = CalibrationGate.SEPARATION_RATIO_MIN,
                 separation = gate.separation,
                 separationMin = CalibrationGate.SEPARATION_MIN,
+                droppedFaceLostPerPoint = droppedFaceLostByTarget.toList(),
+                droppedBlinkPerPoint = droppedBlinkByTarget.toList(),
             )
             // 拒存訊息只列未通過的條件（兩條件為且關係），量到的數字與門檻都明說。
             val reasons = buildList {
@@ -943,6 +1020,8 @@ class CalibrationActivity : AppCompatActivity() {
             separationThreshold = CalibrationGate.SEPARATION_RATIO_MIN,
             separation = gate.separation,
             separationMin = CalibrationGate.SEPARATION_MIN,
+            droppedFaceLostPerPoint = droppedFaceLostByTarget.toList(),
+            droppedBlinkPerPoint = droppedBlinkByTarget.toList(),
         )
         showReport(
             ReportData(
@@ -987,6 +1066,8 @@ class CalibrationActivity : AppCompatActivity() {
         separationThreshold: Double = Double.NaN,
         separation: Double = Double.NaN,
         separationMin: Double = Double.NaN,
+        droppedFaceLostPerPoint: List<Int> = emptyList(),
+        droppedBlinkPerPoint: List<Int> = emptyList(),
     ) {
         if (calibUploaded || calibRows.isEmpty()) return
         if (!settings.diagnosticLogging || !settings.remoteMonitor) return
@@ -1023,6 +1104,8 @@ class CalibrationActivity : AppCompatActivity() {
             separationThreshold = separationThreshold,
             separation = separation,
             separationMin = separationMin,
+            droppedFaceLostPerPoint = droppedFaceLostPerPoint,
+            droppedBlinkPerPoint = droppedBlinkPerPoint,
         )
         GazeLog.uploadCalibration(id, CalibLog.buildCsv(calibRows), calibRows.size)
         GazeLog.uploadCalibration("$id-sum", summary, 0)
@@ -1116,9 +1199,12 @@ class CalibrationActivity : AppCompatActivity() {
         pointDeviceAngles.clear()
         pointLightLogs.clear()
         pointSampleTimes.clear()
+        pointSampleExtras.clear()
         calibRows.clear()
         calibT0Ms = 0L
         calibUploaded = false
+        droppedFaceLostByTarget.fill(0)
+        droppedBlinkByTarget.fill(0)
         calibrationGlassesSamples.clear()
         committedPoints = 0
         pointTimeoutCount = 0

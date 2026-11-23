@@ -259,6 +259,10 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
 
     // 模式與手勢狀態
     private var currentMode = ActionMode.TAP
+
+    /** 診斷紀錄事件欄：動作派發時掛上，下一筆真的寫入的 GazeLog.record 才經 onWritten 清除；節流丟棄時保留。 */
+    private var pendingLogEvent: String? = null
+
     private var swipeStartPoint: Pair<Float, Float>? = null
 
     /**
@@ -587,6 +591,9 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
                 offsetX = if (settings.conditionCorrection) appliedOffsetX else 0f,
                 offsetY = if (settings.conditionCorrection) appliedOffsetY else 0f,
                 lux = smoothedLux.takeIf { it.isFinite() && it >= 0f },
+                mode = currentMode.name, event = pendingLogEvent, onWritten = { pendingLogEvent = null },
+                devPitch = smoothedPitch.takeIf { it.isFinite() },
+                devRoll = smoothedRoll.takeIf { it.isFinite() },
             )
             // 提醒顯示中也要推進狀態機（逾時／移開邏輯），否則臉遺失期間提醒永遠不消失
             if (reminderActive) {
@@ -712,6 +719,18 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
                 lux = sample.ambientLux.takeIf { it.isFinite() && it >= 0f },
                 imageQuality = sample.eyeContrast.takeIf { it.isFinite() },
                 glassesHint = sample.specularRatio.takeIf { it.isFinite() },
+                mode = currentMode.name, event = pendingLogEvent, onWritten = { pendingLogEvent = null },
+                devPitch = sample.devicePitch.takeIf { it.isFinite() },
+                devRoll = sample.deviceRoll.takeIf { it.isFinite() },
+                rawPitch = sample.rawPitch.takeIf { it.isFinite() },
+                rawRoll = sample.rawRoll.takeIf { it.isFinite() },
+                rvX = sample.rvX.takeIf { it.isFinite() },
+                rvY = sample.rvY.takeIf { it.isFinite() },
+                rvZ = sample.rvZ.takeIf { it.isFinite() },
+                rvW = sample.rvW.takeIf { it.isFinite() },
+                leftOpen = sample.leftOpen.takeIf { it.isFinite() },
+                rightOpen = sample.rightOpen.takeIf { it.isFinite() },
+                eyeMeanLum = sample.eyeMeanLum.takeIf { it.isFinite() },
             )
             screenDwell.reset()
             currentProgress = 0f
@@ -749,6 +768,18 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             lux = sample.ambientLux.takeIf { it.isFinite() && it >= 0f },
             imageQuality = sample.eyeContrast.takeIf { it.isFinite() },
             glassesHint = sample.specularRatio.takeIf { it.isFinite() },
+            mode = currentMode.name, event = pendingLogEvent, onWritten = { pendingLogEvent = null },
+            devPitch = sample.devicePitch.takeIf { it.isFinite() },
+            devRoll = sample.deviceRoll.takeIf { it.isFinite() },
+            rawPitch = sample.rawPitch.takeIf { it.isFinite() },
+            rawRoll = sample.rawRoll.takeIf { it.isFinite() },
+            rvX = sample.rvX.takeIf { it.isFinite() },
+            rvY = sample.rvY.takeIf { it.isFinite() },
+            rvZ = sample.rvZ.takeIf { it.isFinite() },
+            rvW = sample.rvW.takeIf { it.isFinite() },
+            leftOpen = sample.leftOpen.takeIf { it.isFinite() },
+            rightOpen = sample.rightOpen.takeIf { it.isFinite() },
+            eyeMeanLum = sample.eyeMeanLum.takeIf { it.isFinite() },
         )
 
         // 條件變化評估（約每 0.5 秒一次）：變化大時查歷史內插，沒遇過才跳提醒
@@ -855,6 +886,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
                         }
                         controlView?.activeMode = currentMode
                         controlView?.invalidate()
+                        pendingLogEvent = "mode_change:${currentMode.name}"
                     }
                     // 切到暫停保持展開（要看得到「重啟」）；選了其他模式則短暫
                     // 顯示選中態後自動收回。
@@ -1424,6 +1456,9 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
                 offsetX = if (settings.conditionCorrection) appliedOffsetX else 0f,
                 offsetY = if (settings.conditionCorrection) appliedOffsetY else 0f,
                 lux = smoothedLux.takeIf { it.isFinite() && it >= 0f },
+                mode = currentMode.name, event = pendingLogEvent, onWritten = { pendingLogEvent = null },
+                devPitch = smoothedPitch.takeIf { it.isFinite() },
+                devRoll = smoothedRoll.takeIf { it.isFinite() },
             )
             cursor.updateRecoveryTarget(tx, ty, frozenProgress, faceLost = true)
             return
@@ -1480,6 +1515,18 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             lux = sample.ambientLux.takeIf { it.isFinite() && it >= 0f },
             imageQuality = sample.eyeContrast.takeIf { it.isFinite() },
             glassesHint = sample.specularRatio.takeIf { it.isFinite() },
+            mode = currentMode.name, event = pendingLogEvent, onWritten = { pendingLogEvent = null },
+            devPitch = sample.devicePitch.takeIf { it.isFinite() },
+            devRoll = sample.deviceRoll.takeIf { it.isFinite() },
+            rawPitch = sample.rawPitch.takeIf { it.isFinite() },
+            rawRoll = sample.rawRoll.takeIf { it.isFinite() },
+            rvX = sample.rvX.takeIf { it.isFinite() },
+            rvY = sample.rvY.takeIf { it.isFinite() },
+            rvZ = sample.rvZ.takeIf { it.isFinite() },
+            rvW = sample.rvW.takeIf { it.isFinite() },
+            leftOpen = sample.leftOpen.takeIf { it.isFinite() },
+            rightOpen = sample.rightOpen.takeIf { it.isFinite() },
+            eyeMeanLum = sample.eyeMeanLum.takeIf { it.isFinite() },
         )
 
         val dt = (now - recoveryLastFrameAt).coerceIn(0L, 200L)
@@ -1587,15 +1634,18 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
     private fun triggerActionAt(x: Float, y: Float) {
         when (currentMode) {
             ActionMode.TAP -> {
+                pendingLogEvent = "tap"
                 performTap(x, y)
             }
             ActionMode.DOUBLE_TAP -> {
+                pendingLogEvent = "double_tap"
                 performDoubleTap(x, y)
                 currentMode = ActionMode.TAP
                 controlView?.activeMode = ActionMode.TAP
                 controlView?.invalidate()
             }
             ActionMode.LONG_PRESS -> {
+                pendingLogEvent = "long_press"
                 performLongPress(x, y)
                 currentMode = ActionMode.TAP
                 controlView?.activeMode = ActionMode.TAP
@@ -1604,6 +1654,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             ActionMode.SWIPE -> {
                 val start = swipeStartPoint
                 if (start == null) {
+                    pendingLogEvent = "swipe_start"
                     swipeStartPoint = x to y
                     mainHandler.post {
                         Toast.makeText(this, "起點已選取，請注視滑動終點", Toast.LENGTH_SHORT).show()
@@ -1611,6 +1662,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
                     controlView?.swipeState = 1 // 1 代表已選起點
                     controlView?.invalidate()
                 } else {
+                    pendingLogEvent = "swipe"
                     performSwipe(start.first, start.second, x, y)
                     swipeStartPoint = null
                     currentMode = ActionMode.TAP
@@ -1628,20 +1680,24 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         when {
             top -> {
                 // 頂部邊緣停留：返回
+                pendingLogEvent = "edge_back"
                 performGlobalAction(GLOBAL_ACTION_BACK)
                 cursorView?.post { cursorView?.flashClick() }
             }
             bottom -> {
                 // 底部邊緣停留：首頁
+                pendingLogEvent = "edge_home"
                 performGlobalAction(GLOBAL_ACTION_HOME)
                 cursorView?.post { cursorView?.flashClick() }
             }
             left -> {
                 // 左側邊緣停留：向上捲動
+                pendingLogEvent = "edge_scroll_up"
                 performScroll(up = true)
             }
             right -> {
                 // 右側邊緣停留：向下捲動
+                pendingLogEvent = "edge_scroll_down"
                 performScroll(up = false)
             }
         }

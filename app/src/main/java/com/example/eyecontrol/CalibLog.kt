@@ -15,12 +15,16 @@ package com.example.eyecontrol
  * 欄位：pass（輪次 0 起）、target（目標點 0 起，row-major）、idx（該點緩衝區序號）、
  * tMs（相對本次校正首筆樣本的毫秒）、targetX／targetY（目標像素座標）、kept（是否被
  * 留用進訓練集）、luxLog（log10(lux)，NaN 表無感測器資料）、devPitch／devRoll（裝置
- * 角度弧度，NaN 表無資料）、f0..f24（25 維特徵向量，與模型輸入同一份陣列）。
+ * 角度弧度，NaN 表無資料）、f0..f24（25 維特徵向量，與模型輸入同一份陣列）、
+ * wallMs（絕對時間戳毫秒）、luxRaw（原始 lux）、leftOpen／rightOpen（睜眼程度）、
+ * eyeMeanLum／eyeContrast／specularRatio（眼部影像度量）、rawPitch／rawRoll／rawYaw
+ * （未平滑原始 orientation）、rvX／rvY／rvZ／rvW（旋轉向量原始分量）、predX／predY
+ * （訓練完成後以新模型對該樣本的預測座標，與報告頁誤差同一算法，NaN 表未算出）。
  * 非有限值一律記為空欄，絕不以 0 假裝量到。
  */
 object CalibLog {
 
-    /** 一筆校正樣本。features 為餵給模型的特徵陣列（不複製，呼叫端不得事後修改）。 */
+    /** 一筆校正樣本。features 為餵給模型的特徵陣列（不複製，呼叫端不得事後修改）。predX／predY 由訓練完成後填入。 */
     data class Row(
         val pass: Int,
         val targetIndex: Int,
@@ -33,12 +37,30 @@ object CalibLog {
         val devicePitch: Double,
         val deviceRoll: Double,
         val features: DoubleArray,
+        val wallMs: Long = 0L,
+        val luxRaw: Double = Double.NaN,
+        val leftOpen: Double = Double.NaN,
+        val rightOpen: Double = Double.NaN,
+        val eyeMeanLum: Double = Double.NaN,
+        val eyeContrast: Double = Double.NaN,
+        val specularRatio: Double = Double.NaN,
+        val rawPitch: Double = Double.NaN,
+        val rawRoll: Double = Double.NaN,
+        val rawYaw: Double = Double.NaN,
+        val rvX: Double = Double.NaN,
+        val rvY: Double = Double.NaN,
+        val rvZ: Double = Double.NaN,
+        val rvW: Double = Double.NaN,
+        var predX: Double = Double.NaN,
+        var predY: Double = Double.NaN,
     )
 
-    /** CSV 表頭（f 欄數以 [GazeFeatureExtractor.DIM] 為準）。 */
+    /** CSV 表頭（f 欄數以 [GazeFeatureExtractor.DIM] 為準；f 欄之後為診斷擴充欄）。 */
     fun header(): String = buildString {
         append("pass,target,idx,tMs,targetX,targetY,kept,luxLog,devPitch,devRoll")
         for (i in 0 until GazeFeatureExtractor.DIM) append(",f$i")
+        append(",wallMs,luxRaw,leftOpen,rightOpen,eyeMeanLum,eyeContrast,specularRatio")
+        append(",rawPitch,rawRoll,rawYaw,rvX,rvY,rvZ,rvW,predX,predY")
     }
 
     /** 全部樣本列成一份 CSV（含表頭）。空列回傳只有表頭的字串。 */
@@ -58,6 +80,22 @@ object CalibLog {
             for (i in 0 until GazeFeatureExtractor.DIM) {
                 append(',').append(fmt(r.features.getOrNull(i)))
             }
+            append(',').append(if (r.wallMs == 0L) "" else r.wallMs.toString())
+            append(',').append(fmt(r.luxRaw))
+            append(',').append(fmt(r.leftOpen))
+            append(',').append(fmt(r.rightOpen))
+            append(',').append(fmt(r.eyeMeanLum))
+            append(',').append(fmt(r.eyeContrast))
+            append(',').append(fmt(r.specularRatio))
+            append(',').append(fmt(r.rawPitch))
+            append(',').append(fmt(r.rawRoll))
+            append(',').append(fmt(r.rawYaw))
+            append(',').append(fmt(r.rvX))
+            append(',').append(fmt(r.rvY))
+            append(',').append(fmt(r.rvZ))
+            append(',').append(fmt(r.rvW))
+            append(',').append(fmt(r.predX))
+            append(',').append(fmt(r.predY))
             append('\n')
         }
     }
@@ -97,6 +135,10 @@ object CalibLog {
         separation: Double = Double.NaN,
         /** 有效性檢查的絕對分離度下限；NaN 表未執行檢查。 */
         separationMin: Double = Double.NaN,
+        /** 每目標點採樣時因臉遺失丟棄的影格數（依 pointIndex 順序，長度 9；空表舊呼叫端相容）。 */
+        droppedFaceLostPerPoint: List<Int> = emptyList(),
+        /** 每目標點採樣時因眨眼／閉眼丟棄的影格數（依 pointIndex 順序，長度 9）。 */
+        droppedBlinkPerPoint: List<Int> = emptyList(),
     ): String = buildString {
         append("{")
         append("\"profile\":").append(jsonStr(profileId)).append(',')
@@ -123,7 +165,13 @@ object CalibLog {
         append("\"separationRatio\":").append(num(separationRatio)).append(',')
         append("\"separationThreshold\":").append(num(separationThreshold)).append(',')
         append("\"separation\":").append(num(separation)).append(',')
-        append("\"separationMin\":").append(num(separationMin))
+        append("\"separationMin\":").append(num(separationMin)).append(',')
+        append("\"droppedFaceLost\":[")
+        droppedFaceLostPerPoint.joinTo(this, separator = ",") { it.toString() }
+        append("],")
+        append("\"droppedBlink\":[")
+        droppedBlinkPerPoint.joinTo(this, separator = ",") { it.toString() }
+        append("]")
         append("}")
     }
 

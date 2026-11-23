@@ -183,6 +183,13 @@ class FaceTrackerEngine(
                             eyeMeanLum = metrics?.meanLum ?: Double.NaN,
                             eyeContrast = metrics?.contrast ?: Double.NaN,
                             specularRatio = metrics?.specularRatio ?: Double.NaN,
+                            rawPitch = orientation?.rawPitch ?: Double.NaN,
+                            rawRoll = orientation?.rawRoll ?: Double.NaN,
+                            rawYaw = orientation?.rawYaw ?: Double.NaN,
+                            rvX = orientation?.rvX ?: Double.NaN,
+                            rvY = orientation?.rvY ?: Double.NaN,
+                            rvZ = orientation?.rvZ ?: Double.NaN,
+                            rvW = orientation?.rvW ?: Double.NaN,
                         )
                         onSample(outSample)
                         // 驗證影格（有臉幀才取裁切）：週期、退化事件、臉部重現、服務端事件請求。

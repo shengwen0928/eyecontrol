@@ -33,7 +33,7 @@ object GazeLog {
     private const val MAX_FILES = 3
     private const val MAX_SECONDS = 120L
     private const val MIN_INTERVAL_MS = 100L
-    private const val HEADER = "t,face,iod,pitch,yaw,rawX,rawY,gainX,gainY,curX,curY,sens,offX,offY,lux,imgQ,glassesHint"
+    private const val HEADER = "t,face,iod,pitch,yaw,rawX,rawY,gainX,gainY,curX,curY,sens,offX,offY,lux,imgQ,glassesHint,wallMs,mode,event,devPitch,devRoll,rawPitch,rawRoll,rvX,rvY,rvZ,rvW,leftOpen,rightOpen,eyeMeanLum"
 
     /**
      * 遠端監控端點（Supabase 專案 gaze-monitor，內部調校用，調適完連同此段程式一併移除）。
@@ -66,6 +66,13 @@ object GazeLog {
      * 表示這幀期間遠端監控開著，關檔時把整份檔案上傳。
      * [lux]、[imageQuality]、[glassesHint] 為環境光（lux）、眼部影像對比、
      * 眼區反光比例：非有限值一律記為空欄（未知），絕不以 0 假裝量到。
+     * 診斷擴充欄（皆有預設值，舊呼叫端相容）：[wallMs] 絕對時間戳、[mode] 當前
+     * 操作模式、[event] 動作派發時掛上的事件（寫入成功後經 [onWritten] 清除）、
+     * [devPitch]/[devRoll] 平滑後裝置角度、[rawPitch]/[rawRoll] 未平滑
+     * 原始 orientation、[rvX]/[rvY]/[rvZ]/[rvW] 旋轉向量原始分量、
+     * [leftOpen]/[rightOpen] 睜眼程度、[eyeMeanLum] 眼部平均亮度。
+     * [onWritten] 只在該筆真的寫入檔案後呼叫（節流丟棄、關檔、寫入失敗時不呼叫），
+     * 供呼叫端在寫入成功後才清除事件欄——事件不得在節流丟棄時遺失。
      */
     fun record(
         context: Context,
@@ -85,6 +92,21 @@ object GazeLog {
         lux: Float? = null,
         imageQuality: Double? = null,
         glassesHint: Double? = null,
+        wallMs: Long = System.currentTimeMillis(),
+        mode: String? = null,
+        event: String? = null,
+        devPitch: Double? = null,
+        devRoll: Double? = null,
+        rawPitch: Double? = null,
+        rawRoll: Double? = null,
+        rvX: Double? = null,
+        rvY: Double? = null,
+        rvZ: Double? = null,
+        rvW: Double? = null,
+        leftOpen: Double? = null,
+        rightOpen: Double? = null,
+        eyeMeanLum: Double? = null,
+        onWritten: (() -> Unit)? = null,
     ) {
         if (!enabled) {
             close()
@@ -132,13 +154,27 @@ object GazeLog {
             append(',').append(fmt(lux?.toDouble()))
             append(',').append(fmt(imageQuality))
             append(',').append(fmt(glassesHint))
+            append(',').append(wallMs)
+            append(',').append(mode ?: "")
+            append(',').append(event ?: "")
+            append(',').append(fmt(devPitch))
+            append(',').append(fmt(devRoll))
+            append(',').append(fmt(rawPitch))
+            append(',').append(fmt(rawRoll))
+            append(',').append(fmt(rvX))
+            append(',').append(fmt(rvY))
+            append(',').append(fmt(rvZ))
+            append(',').append(fmt(rvW))
+            append(',').append(fmt(leftOpen))
+            append(',').append(fmt(rightOpen))
+            append(',').append(fmt(eyeMeanLum))
         }
         runCatching {
             writer?.write(line + "\n")
             rows++
             lastMs = now
             if (rows % 50 == 0) writer?.flush()
-        }.onFailure { close() }
+        }.onFailure { close() }.onSuccess { onWritten?.invoke() }
     }
 
     fun close(upload: Boolean = true) {

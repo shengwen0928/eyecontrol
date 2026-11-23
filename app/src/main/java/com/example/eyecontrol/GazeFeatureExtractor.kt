@@ -19,6 +19,10 @@ import kotlin.math.hypot
  * eyeMeanLum / eyeContrast / specularRatio：同一時刻的眼部影像度量（裝置端即時量測的數字，
  * 不含影像）；NaN = 當時沒有影像度量（例如幀槽已被新幀覆寫）。只做信心判斷與診斷記錄，
  * 不進特徵向量（影像度量不進模型；環境光才進，見上）。
+ * rawPitch / rawRoll / rawYaw：未經平滑的原始 orientation（弧度，旋轉向量換算）；
+ * rvX / rvY / rvZ / rvW：旋轉向量原始分量。皆為診斷紀錄用，不進模型；
+ * NaN = 當時沒有感測器資料。管線刻意不用生陀螺儀角速度（積分漂移），故沒有
+ * 陀螺儀原始角速度可記；臉部信心分數 MediaPipe 沒有提供，也沒有可記的數字。
  * 預測時只用「與校正時的變化量」，不拿絕對角度當特徵（見 GazeModel）。
  * 光特徵例外：光是連續模型輸入，以絕對 log 尺度置中，不取與校正時的差值。
  */
@@ -33,6 +37,13 @@ data class GazeSample(
     val eyeMeanLum: Double = Double.NaN,
     val eyeContrast: Double = Double.NaN,
     val specularRatio: Double = Double.NaN,
+    val rawPitch: Double = Double.NaN,
+    val rawRoll: Double = Double.NaN,
+    val rawYaw: Double = Double.NaN,
+    val rvX: Double = Double.NaN,
+    val rvY: Double = Double.NaN,
+    val rvZ: Double = Double.NaN,
+    val rvW: Double = Double.NaN,
 )
 
 /** 虹膜影像精修結果（正規化座標）：landmark 位置與影像質心混合後的位置。 */
