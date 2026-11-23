@@ -1,3 +1,21 @@
+/*
+ * Copyright (C) 2026 SuShengWen(ZhuZhu)
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+
 package com.example.eyecontrol
 
 import android.app.AlertDialog
@@ -179,7 +197,7 @@ class SettingsActivity : AppCompatActivity() {
                 .setMessage(
                     "讓視線，成為自由操作的力量。\n\n" +
                         "凝視是開源的 Android 無障礙工具，用眼睛移動游標、凝視停留或眨眼來操作手機，給無法用手操作的人。\n\n" +
-                        "授權：MIT License。原始碼公開於 GitHub（shengwen0928/eyecontrol）。",
+                        "授權：GNU AGPL v3.0 or later。原始碼公開於 GitHub（shengwen0928/eyecontrol）。",
                 )
                 .setPositiveButton("知道了", null)
                 .show()
