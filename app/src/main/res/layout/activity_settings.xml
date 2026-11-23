@@ -424,6 +424,47 @@
                     android:background="@color/ec_stone" />
 
                 <LinearLayout
+                    android:id="@+id/rowBlinkClick"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="眨眼點擊"
+                            android:textSize="@dimen/ec_text_body" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="預設關閉；開啟後以閉眼時間判定點擊，自然眨眼可能誤觸。"
+                            android:textColor="@color/ec_text_secondary"
+                            android:textSize="@dimen/ec_text_small" />
+                    </LinearLayout>
+
+                    <Switch
+                        android:id="@+id/switchBlinkClick"
+                        android:layout_width="wrap_content"
+                        android:layout_height="48dp"
+                        android:contentDescription="眨眼點擊" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/ec_stone" />
+
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
@@ -847,6 +888,236 @@
                         android:layout_width="wrap_content"
                         android:layout_height="48dp"
                         android:contentDescription="遠端監控" />
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- 邊緣手勢 -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:paddingStart="4dp"
+            android:text="邊緣手勢"
+            android:textColor="@color/ec_text_secondary"
+            android:textSize="@dimen/ec_text_small"
+            android:textStyle="bold" />
+
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            app:cardBackgroundColor="@color/ec_card_white"
+            app:cardCornerRadius="@dimen/ec_card_radius"
+            app:cardElevation="0dp"
+            app:strokeColor="@color/ec_stone"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="4dp">
+
+                <LinearLayout
+                    android:id="@+id/rowEdgeGestures"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="啟用邊緣手勢"
+                            android:textSize="@dimen/ec_text_body" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="關閉後，看向螢幕四邊都不會觸發返回、首頁或捲動。"
+                            android:textColor="@color/ec_text_secondary"
+                            android:textSize="@dimen/ec_text_small" />
+                    </LinearLayout>
+
+                    <Switch
+                        android:id="@+id/switchEdgeGestures"
+                        android:layout_width="wrap_content"
+                        android:layout_height="48dp"
+                        android:contentDescription="啟用邊緣手勢" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/ec_stone" />
+
+                <LinearLayout
+                    android:id="@+id/rowEdgeTop"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="頂部：返回"
+                            android:textSize="@dimen/ec_text_body" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="看向頂部邊緣，經確認提示後才返回上一頁。"
+                            android:textColor="@color/ec_text_secondary"
+                            android:textSize="@dimen/ec_text_small" />
+                    </LinearLayout>
+
+                    <Switch
+                        android:id="@+id/switchEdgeTop"
+                        android:layout_width="wrap_content"
+                        android:layout_height="48dp"
+                        android:contentDescription="頂部返回" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/ec_stone" />
+
+                <LinearLayout
+                    android:id="@+id/rowEdgeBottom"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="底部：回首頁"
+                            android:textSize="@dimen/ec_text_body" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="看向底部邊緣，經確認提示後才回到首頁。"
+                            android:textColor="@color/ec_text_secondary"
+                            android:textSize="@dimen/ec_text_small" />
+                    </LinearLayout>
+
+                    <Switch
+                        android:id="@+id/switchEdgeBottom"
+                        android:layout_width="wrap_content"
+                        android:layout_height="48dp"
+                        android:contentDescription="底部回首頁" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/ec_stone" />
+
+                <LinearLayout
+                    android:id="@+id/rowEdgeLeft"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="左側：向上捲動"
+                            android:textSize="@dimen/ec_text_body" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="沿左側邊緣向上看，內容向上捲動。"
+                            android:textColor="@color/ec_text_secondary"
+                            android:textSize="@dimen/ec_text_small" />
+                    </LinearLayout>
+
+                    <Switch
+                        android:id="@+id/switchEdgeLeft"
+                        android:layout_width="wrap_content"
+                        android:layout_height="48dp"
+                        android:contentDescription="左側向上捲動" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/ec_stone" />
+
+                <LinearLayout
+                    android:id="@+id/rowEdgeRight"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="右側：向下捲動"
+                            android:textSize="@dimen/ec_text_body" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="沿右側邊緣向下看，內容向下捲動。"
+                            android:textColor="@color/ec_text_secondary"
+                            android:textSize="@dimen/ec_text_small" />
+                    </LinearLayout>
+
+                    <Switch
+                        android:id="@+id/switchEdgeRight"
+                        android:layout_width="wrap_content"
+                        android:layout_height="48dp"
+                        android:contentDescription="右側向下捲動" />
                 </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>

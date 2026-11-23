@@ -321,6 +321,12 @@ class VerifyFrames(private val appContext: Context) {
         const val CAPTURE_DWELL_FIRE = "dwell-fire"
         const val CAPTURE_EDGE_FIRE = "edge-fire"
         const val CAPTURE_EDGE_DENIED = "edge-denied"
+
+        /** 二階段確認目標顯示時（PLAN D3-8 新增確認階段擷取點，供誤觸／漏觸分析）。 */
+        const val CAPTURE_EDGE_CONFIRM_SHOW = "edge-confirm-show"
+
+        /** 二階段確認被取消時（離開確認目標／檢查失敗／中斷，供漏觸分析）。 */
+        const val CAPTURE_EDGE_CONFIRM_CANCELLED = "edge-confirm-cancelled"
     }
 }
 

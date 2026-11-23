@@ -294,25 +294,6 @@
                     android:layout_height="wrap_content"
                     android:textColor="@color/ec_text_secondary"
                     android:textSize="@dimen/ec_text_small" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnCamera"
-                    style="@style/Widget.Material3.Button.TextButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:contentDescription="授予相機權限"
-                    android:text="授予相機權限"
-                    android:visibility="gone" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnAccessibility"
-                    style="@style/Widget.Material3.Button.TextButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:contentDescription="開啟無障礙服務設定"
-                    android:text="開啟無障礙服務"
-                    android:visibility="gone" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

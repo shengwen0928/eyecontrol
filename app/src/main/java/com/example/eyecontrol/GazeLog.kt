@@ -172,6 +172,11 @@ object GazeLog {
 
     /** 把一份關好的紀錄上傳到監控端點（Supabase REST insert）。失敗只寫 Logcat，不打擾使用者、不重試。 */
     private fun uploadFile(csvText: String, id: String, rowCount: Int) {
+        // 顯式 flavor 守衛（STEP 3，R-2／K-45）：Play 版不上傳的防護不再
+        // 只靠呼叫端閘門。側載版 REMOTE_MONITOR_ENABLED 為 true，行為不變；
+        // Play 版為 false，直接返回、不發出任何請求。全部呼叫點皆在本檔
+        // 內（close() 與 uploadFrame()），守衛覆蓋 CSV 與影格兩路徑。
+        if (!BuildConfig.REMOTE_MONITOR_ENABLED) return
         if (SUPABASE_URL.isBlank()) return
         runCatching {
             val body = """{"id":${jsonStr(id)},"rows":$rowCount,"csv":${jsonStr(csvText)}}"""

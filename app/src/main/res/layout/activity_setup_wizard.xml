@@ -85,6 +85,17 @@
         android:text="先跳過，之後再做"
         android:visibility="gone" />
 
+    <!-- D1-15「重新指引」：只在 STEP_SERVICE 驗證未過時出現，預設隱藏。 -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnWizardReguide"
+        style="@style/Widget.Material3.Button.TextButton"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/ec_button_height"
+        android:layout_marginTop="4dp"
+        android:contentDescription="重新指引：再開啟系統無障礙設定頁"
+        android:text="重新指引"
+        android:visibility="gone" />
+
     <com.google.android.material.button.MaterialButton
         android:id="@+id/btnWizardBack"
         style="@style/Widget.Material3.Button.TextButton"

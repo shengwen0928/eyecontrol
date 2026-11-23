@@ -6,6 +6,7 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Context
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Color
@@ -13,6 +14,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.os.SystemClock
+import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
 import android.view.View
@@ -63,7 +65,19 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
 
     private val settingsListener =
         SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+            val wasRemoteUploadEnabled = remoteUploadEnabled()
             settings = GazeSettings.load(this)
+            // 撤回遠端監控同意（STEP 3，R-1）：只有「開 → 關」的轉換才
+            // 丟棄當下檔案——close(upload = false) 關檔且不提交上傳、
+            // 並重置 pendingUpload；開啟狀態下的其他設定變更不得觸發
+            // 關檔。影格路徑不動（排隊中影格執行時重查開關，
+            // 見 VerifyFrames.storeAndUpload）。
+            if (GuardDecisions.shouldDiscardCurrentFileOnRevoke(
+                    wasRemoteUploadEnabled, remoteUploadEnabled(),
+                )
+            ) {
+                GazeLog.close(upload = false)
+            }
             applyVerifyCaptureFlags()
         }
 
@@ -88,7 +102,20 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             model = CalibrationStore.loadModel(this, CalibrationStore.getActiveProfileId(this))
             // reloadConditionState 觸及 overlay view，必須在主執行緒執行；
             // 此 listener 可能在非主執行緒回呼，故 post 到主執行緒。
-            mainHandler.post { reloadConditionState() }
+            mainHandler.post {
+                reloadConditionState()
+                // 第 4 步遺留 (a)：換情境／換模型後 flowState 必須重推導，
+                // 否則切到未校正情境仍顯示 SERVICE_RUNNING。推導走同一
+                // syncFlowState（事實優先，見 (c) 的說明）：模型出現／失效
+                // 事件在部分來源態無合法邊時以推導結果和解，不改事件語義。
+                val hasModel = CalibrationStore.exists(
+                    this, CalibrationStore.getActiveProfileId(this),
+                )
+                syncFlowState(
+                    if (hasModel) FlowEvent.ModelAppeared else FlowEvent.ModelInvalidated,
+                    deriveFlowState(hasModel),
+                )
+            }
         }
 
     private val filterX = OneEuroFilter(minCutoff = 0.2, beta = 0.015)
@@ -98,15 +125,149 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
     @Volatile
     private var pausedForCalibration = false
 
-    /** 使用者從 Dashboard 按「停止追蹤」：引擎停表且不再自動重啟，直到按「開始眼控」。 */
+    /** 僅 `stopCompletely` 使用的完全停止旗標：引擎停表且不再自動重啟，直到按「開始眼控」。
+     * 一般「停止眼控」不立此旗標，改走 [inRecoveryMode]（D2-1 語義分離）。 */
     @Volatile
     private var userStopped = false
+
+    /**
+     * RECOVERY_MODE 旗標（D2-1）：「停止眼控」後立此旗標，引擎續跑、相機
+     * 開著，只等注視重啟目標。僅 `stopTracking` 立、重啟成功／驗證失敗／
+     * `stopCompletely` 清。
+     *
+     * 已知缺口 K-30：本旗標與 [userStopped] 皆未持久化，行程重啟即丟失，
+     * `onServiceConnected` 不檢查舊旗標、現況自動恢復語義維持不變；
+     * 持久化與否待 D-8 決定，不得宣稱為已修復。
+     */
+    @Volatile
+    private var inRecoveryMode = false
+
+    /**
+     * 重啟目標的獨立線性 dwell 計時狀態（D2-2，與面板把手同一模式，
+     * 秒數取 `settings.dwellTimeMs`）。臉遺失／閉眼時進度凍結不清零，
+     * 沿用現況閉眼凍結語義。只在主執行緒讀寫。
+     */
+    private var recoveryDwellAccumMs = 0L
+    private var recoveryLastFrameAt = 0L
+
+    /**
+     * 重啟目標武裝旗標（D2-4，沿用 `handleArmed` 模式）：重啟成功後設 false，
+     * 視線須先離開目標區一次才重新武裝（下次進入 RECOVERY_MODE 前、
+     * 或在 RECOVERY_MODE 內離開目標區時武裝）。
+     */
+    private var recoveryArmed = true
+
+    /** 重啟驗證序列進行中（D2-4）：進行中忽略新的目標 dwell，避免重複觸發。 */
+    private var recoveryVerifying = false
+
+    /**
+     * 邊緣手勢控制器（Phase 3 D3-1…D3-8，純 Kotlin）：每幀由主路徑餵同一幀
+     * 的已算數據，只做判決、不執行動作。提醒／RECOVERY／PAUSED／校正交接
+     * 期間不餵幀（各分支提早返回），中斷時以 [cancelEdgeGesture] 強制回 IDLE。
+     */
+    private val edgeController = EdgeGestureController()
+
+    /** 確認目標是否正在顯示（服務端互斥保證：提醒／重啟／確認同一時間只顯示一種）。 */
+    private var edgeConfirmShowing = false
+
+    /** 邊緣被擋擷取是否已在本次進入帶內發過（避免每幀重複擷取）。 */
+    private var edgeDeniedCaptured = false
+
+    /**
+     * 流程層狀態（Phase 3 D1-2）：狀態機持有者＋對外可讀的現態鏡像。
+     * 寫入只在主執行緒（onServiceConnected／startEngine／交接／停止的
+     * mainHandler 回呼內）；@Volatile 保證 Dashboard 讀取端可見。
+     * 底層事實來源仍是 userStopped／inRecoveryMode／pausedForCalibration 等旗標，
+     * flowState 只做同步鏡像，不取代旗標語義、不改變任何旗標行為。
+     */
+    private val flowLogger = FlowStateLogger { message -> Log.w(TAG, message) }
+
+    private var flowMachine = AppFlowStateMachine(logger = flowLogger)
+
+    @Volatile
+    var flowState: AppFlowState = AppFlowState.NOT_CALIBRATED
+        private set
+
+    /**
+     * 以事實推導流程態（STATE_DESIGN §2.2，優先序：停止 ＞ 恢復 ＞ 校正交接 ＞ 模型存在）。
+     * D2-1 語義分離後：`userStopped`（僅 `stopCompletely`）→ STOPPED；
+     * `inRecoveryMode`（`stopTracking`）→ RECOVERY_MODE（引擎仍在跑、可注視重啟）。
+     */
+    private fun deriveFlowState(hasModel: Boolean): AppFlowState = when {
+        userStopped -> AppFlowState.STOPPED
+        inRecoveryMode -> AppFlowState.RECOVERY_MODE
+        pausedForCalibration -> AppFlowState.CALIBRATING
+        !hasModel -> AppFlowState.NOT_CALIBRATED
+        else -> AppFlowState.SERVICE_RUNNING
+    }
+
+    /**
+     * 初始態推導（onServiceConnected 專用）：以推導結果為狀態機初始態，
+     * 這是初始推導、不是轉換事件。模型存在即 SERVICE_RUNNING（行程重啟不
+     * 檢查舊旗標、現況自動恢復語義，STATE_DESIGN §2.2 註）；無模型即
+     * NOT_CALIBRATED。startEngine 會再依成敗同步為 SERVICE_RUNNING／ERROR。
+     */
+    private fun deriveInitialFlowState() {
+        val initial = deriveFlowState(
+            CalibrationStore.exists(this, CalibrationStore.getActiveProfileId(this)),
+        )
+        flowMachine = AppFlowStateMachine(initial, flowLogger)
+        flowState = initial
+    }
+
+    /**
+     * 在同步點推進狀態機：先試自然事件；事件不合法時（轉換表無此邊，
+     * 例如 CALIBRATING 直接回 SERVICE_RUNNING），以當下事實推導結果和解：
+     * 重新以推導結果為初始態建立狀態機，確保 flowState 永不與旗標脫節。
+     * 和解時記一筆警告，供審查追蹤轉換表缺邊。Failure 事件不走和解：
+     * 它可由任一態進 ERROR，且須更新原因（即使已在 ERROR 態）。
+     *
+     * 第 4 步遺留 (c) 的決定（維持推導和解，不補邊）：SERVICE_RUNNING→
+     * CALIBRATING、CALIBRATING→SERVICE_RUNNING、CALIBRATED→SERVICE_RUNNING
+     * 三對來源／目標在轉換表上無邊，是刻意的——服務端的 flowState 是旗標
+     * 與模型事實的推導鏡像（STATE_DESIGN §2.2），不是引導旅程的事件序列；
+     * 交接（requestPause／resume）與情境切換都是「事實變了，重新推導」，
+     * 沒有既有事件能不扭曲語義地表達（ServiceVerified 是引導返回驗證、
+     * RestartVerified 是 RECOVERY 重啟、CalibrationSucceeded 是九點存檔成功，
+     * 三者皆非「引擎重啟」）。補邊須新事件名或挪用舊事件語義，兩者皆在本步
+     * 紅線之外；和解路徑已保證狀態永不脫節且留 Log.w 痕跡，故保留現況，
+     * 理由亦寫入 AppFlowState.kt 檔頭。D1-2 的 syncFlowState 行為與此決定一致。
+     */
+    private fun syncFlowState(event: FlowEvent, target: AppFlowState) {
+        if (event is FlowEvent.Failure) {
+            flowMachine.transition(event)
+            flowState = flowMachine.state
+            return
+        }
+        if (flowState == target) return
+        if (flowMachine.transition(event) && flowMachine.state == target) {
+            flowState = flowMachine.state
+            return
+        }
+        Log.w(
+            TAG,
+            "流程態和解：$flowState + ${event::class.simpleName} 無合法轉換，依事實推導為 $target",
+        )
+        flowMachine = AppFlowStateMachine(target, flowLogger)
+        flowState = target
+    }
 
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     // 模式與手勢狀態
     private var currentMode = ActionMode.TAP
     private var swipeStartPoint: Pair<Float, Float>? = null
+
+    /**
+     * 待發的雙擊第二下（STEP 3 薄守衛，K-07）：具名持有，方可取消。
+     * 舊版為匿名 postDelayed，模式切換／暫停／停止／提醒介入時無法
+     * 取消、會在背景排隊執行。只在主執行緒讀寫。
+     */
+    private var pendingDoubleTapSecond: Runnable? = null
+
+    /** 集中式手勢派發守衛（DCL-04，STEP 3）：四個 perform* 的 dispatchGesture
+     *  皆經此守衛配對唯一 ID，過期回呼隔離、清理單次、不重播。 */
+    private val dispatchGuard = GestureDispatchGuard()
 
     // 控制面板注視狀態
     private var hoverBtnIndex = -1
@@ -202,7 +363,23 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
 
         addCursorOverlay(wm)
         addControlPanel(wm)
-        startEngine()
+        // 流程態初始推導（D1-2）：見 deriveInitialFlowState 註解。
+        deriveInitialFlowState()
+        // 重啟恢復重查（STEP 3，DCL-05 最小部分）：行程重建後自動恢復前，
+        // 重新檢查相機權限與服務啟用狀態；未通過時不啟動引擎、進 ERROR
+        // 並帶原因，不得無條件恢復。旗標持久化屬 P-03，不在此做。
+        if (!isServiceEnabled(this) ||
+            checkSelfPermission(android.Manifest.permission.CAMERA) !=
+                PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.w(TAG, "重啟恢復重查未通過：相機權限或服務啟用狀態異常，不自動恢復追蹤")
+            syncFlowState(
+                FlowEvent.Failure("無法恢復追蹤：請確認相機權限已授予且凝視服務已開啟"),
+                AppFlowState.ERROR,
+            )
+        } else {
+            startEngine()
+        }
     }
 
     /**
@@ -220,6 +397,9 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         filterY.reset()
         // 旋轉後座標系全變：提醒收掉、條件狀態重置，等下次評估重新推算
         reloadConditionState()
+        // 方向改變：邊緣手勢強制重置（D-3 防止重複觸發段），確認目標收掉；
+        // 控制器亦以幾何比對為第二道防線（下一幀幾何不同即取消進行中手勢）。
+        cancelEdgeGesture()
     }
 
     private fun startForegroundService() {
@@ -260,8 +440,31 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         filterY.reset()
         reloadConditionState()
         engine = FaceTrackerEngine(this) { sample -> onSample(sample) }
-        engine?.start(this)
+        try {
+            engine?.start(this)
+        } catch (e: Exception) {
+            // 引擎同步啟動失敗（例如 FaceLandmarker 建立失敗）：記檔、清引擎、
+            // 流程態進 ERROR 並帶真實原因（校正頁 startEngineSafely 的同一模式）。
+            // 第 4 步遺留 (d) 已知缺口：相機非同步綁定失敗在引擎內部只記 Log、
+            // 不拋出、無任何可觀測信號（FaceTrackerEngine.start 的綁定回呼
+            // catch 後只 Log.e「相機綁定失敗」，無回呼、無狀態旗標；landmarker
+            // 的 ErrorListener 同樣只記 Log），本步無法以此路徑偵測，不得宣稱
+            // 已覆蓋。綁定失敗時唯一的間接徵兆是再也收不到樣本，由 D1-15 的
+            // verifyServiceRunning（快照新鮮度）擋下「驗證通過」，不進 ERROR。
+            CrashReporter.recordCaught(this, "engine.start", e)
+            Log.e(TAG, "引擎啟動失敗", e)
+            engine = null
+            syncFlowState(
+                FlowEvent.Failure("引擎啟動失敗：${e.message ?: e::class.simpleName}"),
+                AppFlowState.ERROR,
+            )
+            return
+        }
         applyVerifyCaptureFlags()
+        syncFlowState(
+            FlowEvent.ServiceVerified,
+            deriveFlowState(hasModel = model != null),
+        )
     }
 
     private fun addCursorOverlay(wm: WindowManager) {
@@ -331,6 +534,15 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         lastFacePresent = sample != null
         lastCursorValid = hasValidCursor
         lastHasModel = model != null
+
+        // RECOVERY_MODE（D2-1）：單一拒絕分支，位於入口後、主路徑前。
+        // 引擎續跑、樣本續進，但一般 dwell／眨眼／邊緣／面板輸入全部拒絕；
+        // 只跑重啟目標分支（D2-2／D2-3），沿用現況提早返回模式。
+        if (inRecoveryMode) {
+            updateRecoveryTarget(sample, SystemClock.elapsedRealtime())
+            return
+        }
+
         val m = model ?: return
         val cursor = cursorView ?: return
 
@@ -346,6 +558,20 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             controlView?.setHover(-1, 0f)
             // 螢幕停留進度也清掉：臉遺失期間的進度不得在恢復後沿用。
             screenDwell.reset()
+            // 邊緣手勢強制重置（D3-8）：追蹤遺失後不執行舊手勢，須重新累積。
+            cancelEdgeGesture()
+            // 臉遺失殘留清除（STEP 3，DCL-11／T-06）：眨眼狀態、滑動起點、
+            // 濾波歷史不得沿用至臉部重現後的第一幀；待發的雙擊第二下一併
+            // 取消。reset() 只清濾波器狀態、不改濾波參數（見 OneEuroFilter）。
+            // hasValidCursor 不清：游標留原地變灰為有意顯示語義，待 P-08 決定。
+            isBlinking = false
+            blinkStartTime = 0L
+            swipeStartPoint = null
+            controlView?.swipeState = 0
+            controlView?.invalidate()
+            filterX.reset()
+            filterY.reset()
+            cancelPendingDoubleTap()
             // 診斷紀錄也要記臉遺失幀：邊緣看不到臉時，游標不動可能是追蹤丟失而非模型問題。
             // 偏移記目前實際套用的值（與主路徑同一算法），免得摘要的平均偏移被 0 拉偏。
             // 亮度記目前平滑值（臉遺失與光線有關時，摘要看得到）；影像度量無樣本，記空欄。
@@ -390,8 +616,20 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
                 isBlinking = false
                 val blinkDuration = now - blinkStartTime
                 // 故意眨眼點擊：閉眼時間在 150ms 到 600ms 之間，且非暫停模式；
-                // 提醒顯示期間不觸發點擊（提醒狀態機接管這一幀的後續流程）
-                if (blinkDuration in settings.blinkMinMs..settings.blinkMaxMs && hasValidCursor && now >= cooldownUntil && currentMode != ActionMode.PAUSED && !reminderActive) {
+                // 提醒顯示期間不觸發點擊（提醒狀態機接管這一幀的後續流程）。
+                // 獨立開關預設關閉（DCL-13，STEP 3）：判定收斂至
+                // GuardDecisions，開關關閉時永不觸發；意圖校正閘門待 P-05。
+                if (GuardDecisions.shouldTriggerBlinkClick(
+                        blinkClickEnabled = settings.blinkClickEnabled,
+                        blinkDurationMs = blinkDuration,
+                        blinkMinMs = settings.blinkMinMs,
+                        blinkMaxMs = settings.blinkMaxMs,
+                        hasValidCursor = hasValidCursor,
+                        cooldownElapsed = now >= cooldownUntil,
+                        paused = currentMode == ActionMode.PAUSED,
+                        reminderActive = reminderActive,
+                    )
+                ) {
                     triggerActionAt(lastValidX, lastValidY)
                     cooldownUntil = now + settings.cooldownMs
                     dwellStart = now
@@ -452,6 +690,8 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         // 不驅動停留累積、不碰濾波狀態；提醒顯示中則以「不在目標上」推進提醒狀態機。
         // 度量未知（NaN）不等於降級，照常處理。
         if (EyeImageMetrics.isDegraded(sample)) {
+            // 影像降級幀不可信：邊緣候選／確認一併中斷，不得沿用舊進度。
+            cancelEdgeGesture()
             GazeLog.record(
                 this, settings.diagnosticLogging || settings.remoteMonitor,
                 remoteUpload = remoteUploadEnabled(),
@@ -517,13 +757,6 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             return
         }
 
-        val edgeSize = 50f
-        val isAtLeft = x < edgeSize
-        val isAtRight = x > screenW - edgeSize
-        val isAtTop = y < edgeSize
-        val isAtBottom = y > screenH - edgeSize
-        val isAtEdge = isAtLeft || isAtRight || isAtTop || isAtBottom
-
         var progress = 0f
 
         // 控制面板：展開時是 180×700 整列；收合時只剩右緣把手判定區，
@@ -555,6 +788,8 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         }
 
         if (!panelJustCollapsed && inHandleZone) {
+            // 進入把手區：面板接管，邊緣手勢中斷（把手命中區優先於邊緣分支，現況優先序保留）。
+            cancelEdgeGesture()
             // 注視把手展開面板：同一套 dwell 節奏，視線離開就重算。
             // 未武裝或冷卻期間不累積進度，但同樣不觸發螢幕點擊——
             // 把手區是面板的地盤，視線停在這裡不該點到下層 App。
@@ -574,6 +809,8 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             anchorX = x; anchorY = y; dwellStart = now
             screenDwell.reset()
         } else if (!panelJustCollapsed && inPanel) {
+            // 進入面板區：面板接管，邊緣手勢中斷（面板分支優先於邊緣分支，現況優先序保留）。
+            cancelEdgeGesture()
             val relativeY = y - panelTop
             val btnHeight = panelHeight / 5f
             val btnIndex = (relativeY / btnHeight).toInt().coerceIn(0, 4)
@@ -647,64 +884,146 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
 
             // 如果目前是暫停狀態，游標不累積點擊，且不顯示游標（或者顯示半透明灰色）
             if (currentMode == ActionMode.PAUSED) {
+                // PAUSED 期間邊緣手勢不得觸發（D3-8）：進行中的手勢中斷。
+                cancelEdgeGesture()
                 screenDwell.reset()
                 cursor.setCursor(null)
                 return
             }
 
-            // 螢幕點擊的自適應停留（DwellTracker）：錨點跟著緩漂、短暫離開只衰減、
-            // 低速幀才累積。冷卻期間不累積、狀態重置，避免冷卻一過立即重觸。
-            if (now < cooldownUntil) {
-                screenDwell.reset()
-            } else {
-                progress = screenDwell.update(
-                    x, y, now, settings.dwellTimeMs, settings.dwellRadiusPx,
-                )
-                // 錨點同步回服務欄位：點擊落點與游標顯示的「鎖定」效果沿用舊變數。
-                anchorX = screenDwell.anchorX
-                anchorY = screenDwell.anchorY
-                if (progress >= 1f) {
-                    if (isAtEdge) {
-                        // 邊緣手勢門檻：模型外推時游標會被箝在邊緣（實測壞時段
-                        // 5–6 成時間卡在邊緣），只看濾波後位置會讓「看旁邊」誤觸
-                        // 返回／首頁。必須同時滿足：原始預測在螢幕範圍附近（放寬
-                        // 15% 邊界容忍模型小偏差，拒絕數千像素的外推值），且穩定
-                        // 錨點確實落在邊緣區。任一不符就吞掉這次觸發（給冷卻、
-                        // 不動作），絕不拿被箝制的邊緣位置當注視。
-                        val rawMarginX = screenW * EDGE_RAW_MARGIN_FRACTION
-                        val rawMarginY = screenH * EDGE_RAW_MARGIN_FRACTION
-                        val rawInScreen = rawX >= -rawMarginX && rawX <= screenW + rawMarginX &&
-                            rawY >= -rawMarginY && rawY <= screenH + rawMarginY
-                        val anchorAtEdge = anchorX < edgeSize || anchorX > screenW - edgeSize ||
-                            anchorY < edgeSize || anchorY > screenH - edgeSize
-                        if (rawInScreen && anchorAtEdge) {
-                            performEdgeAction(isAtLeft, isAtRight, isAtTop, isAtBottom)
-                            // 驗證影格：邊緣手勢觸發時的實際眼區狀態（下一幀有臉時取）。
-                            engine?.requestVerifyCapture(
-                                VerifyFrames.CAPTURE_EDGE_FIRE, progress
-                            )
+            // 邊緣手勢控制器（D3-2）：同一幀餵控制器，判決優先於一般 dwell。
+            // 邊緣帶幾何集中在控制器（dp 換算，見 EdgeGestureController.edgeBandPx）；
+            // 服務只保留呼叫點，四邊動作對應不變（頂＝返回、底＝首頁、左＝上捲、
+            // 右＝下捲，見 performEdgeAction）。提醒／RECOVERY／校正交接期間
+            // 本分支根本到不了（上方提早返回），天然互斥（D3-8）。
+            val density = resources.displayMetrics.density
+            val edgeZoneNow = edgeController.zoneFor(x, y, screenW, screenH, density)
+            val edgeDecision = edgeController.update(
+                edgeFrame(sample, x, y, rawX, rawY, now), edgeConfig(),
+            )
+            var edgeHandled = false
+            when (edgeDecision) {
+                is EdgeDecision.Execute -> {
+                    cursor.hideConfirmTarget()
+                    edgeConfirmShowing = false
+                    edgeDeniedCaptured = false
+                    performEdgeAction(
+                        edgeDecision.edge == Edge.LEFT,
+                        edgeDecision.edge == Edge.RIGHT,
+                        edgeDecision.edge == Edge.TOP,
+                        edgeDecision.edge == Edge.BOTTOM,
+                    )
+                    // 驗證影格：邊緣手勢觸發時的實際眼區狀態（下一幀有臉時取）。
+                    engine?.requestVerifyCapture(VerifyFrames.CAPTURE_EDGE_FIRE, 1f)
+                    cooldownUntil = now + settings.cooldownMs
+                    screenDwell.reset()
+                    anchorX = x
+                    anchorY = y
+                    progress = 0f
+                    edgeHandled = true
+                }
+                is EdgeDecision.EnterConfirm -> {
+                    showEdgeConfirm(edgeDecision.edge, 0f)
+                    edgeDeniedCaptured = false
+                    engine?.requestVerifyCapture(VerifyFrames.CAPTURE_EDGE_CONFIRM_SHOW, 0f)
+                    screenDwell.reset()
+                    anchorX = x
+                    anchorY = y
+                    progress = 0f
+                    edgeHandled = true
+                }
+                is EdgeDecision.Confirming -> {
+                    showEdgeConfirm(edgeDecision.edge, edgeDecision.progress)
+                    screenDwell.reset()
+                    anchorX = x
+                    anchorY = y
+                    progress = 0f
+                    edgeHandled = true
+                }
+                is EdgeDecision.Cancelled -> {
+                    // 手勢已取消／已中斷（D3-7）：清除進行中狀態、不執行動作、
+                    // 不留殘留提示；確認期間取消時留一張驗證影格供漏觸分析。
+                    val wasConfirming = edgeConfirmShowing
+                    cursor.hideConfirmTarget()
+                    edgeConfirmShowing = false
+                    edgeDeniedCaptured = false
+                    Log.d(TAG, "邊緣手勢已取消／已中斷：${edgeDecision.reason}")
+                    if (wasConfirming) {
+                        engine?.requestVerifyCapture(VerifyFrames.CAPTURE_EDGE_CONFIRM_CANCELLED)
+                    }
+                    screenDwell.reset()
+                    anchorX = x
+                    anchorY = y
+                    progress = 0f
+                    edgeHandled = true
+                }
+                is EdgeDecision.Candidate -> {
+                    // 候選累積中：游標進度環顯示控制器進度，一般 dwell 不累積
+                    // （避免兩套計時打架）；錨點跟著當下注視點，顯示不漂移。
+                    screenDwell.reset()
+                    anchorX = x
+                    anchorY = y
+                    progress = edgeDecision.progress
+                    edgeHandled = true
+                }
+                is EdgeDecision.Blocked -> {
+                    logEdgeCheckFailures(edgeDecision.report)
+                    if (!edgeDeniedCaptured) {
+                        edgeDeniedCaptured = true
+                        engine?.requestVerifyCapture(VerifyFrames.CAPTURE_EDGE_DENIED, 0f)
+                    }
+                    screenDwell.reset()
+                    anchorX = x
+                    anchorY = y
+                    progress = 0f
+                    edgeHandled = true
+                }
+                EdgeDecision.NoAction -> {
+                    // 離開邊緣區後，被擋擷取的「本次進入帶」標記歸零。
+                    if (edgeZoneNow == EdgeZone.NONE) edgeDeniedCaptured = false
+                    // 落下跑一般 dwell；但游標仍在邊緣帶內時（重新觸發鎖定／
+                    // 開關關閉），一般 dwell 不得代為觸發（見下方帶內守衛）。
+                }
+            }
+
+            if (!edgeHandled) {
+                // 螢幕點擊的自適應停留（DwellTracker）：錨點跟著緩漂、短暫離開只衰減、
+                // 低速幀才累積。冷卻期間不累積、狀態重置，避免冷卻一過立即重觸。
+                if (now < cooldownUntil) {
+                    screenDwell.reset()
+                } else {
+                    progress = screenDwell.update(
+                        x, y, now, settings.dwellTimeMs, settings.dwellRadiusPx,
+                    )
+                    // 錨點同步回服務欄位：點擊落點與游標顯示的「鎖定」效果沿用舊變數。
+                    anchorX = screenDwell.anchorX
+                    anchorY = screenDwell.anchorY
+                    if (progress >= 1f) {
+                        if (edgeZoneNow != EdgeZone.NONE) {
+                            // 控制器擁有邊緣判決：此幀未執行（鎖定中／開關關閉／
+                            // 檢查未達），一般 dwell 不得代為觸發或點擊邊緣位置。
+                            // 吞掉這次觸發（給冷卻、不動作），絕不拿被箝制的邊緣
+                            // 位置當注視（現況 v0.5.8 守衛語義，由控制器承接）。
+                            if (!edgeDeniedCaptured) {
+                                edgeDeniedCaptured = true
+                                engine?.requestVerifyCapture(
+                                    VerifyFrames.CAPTURE_EDGE_DENIED, progress,
+                                )
+                            }
                         } else {
-                            Log.d(
-                                TAG,
-                                "邊緣手勢被擋下：原始預測超出螢幕或錨點不在邊緣，視為不可信注視",
-                            )
-                            // 驗證影格：被擋下的觸發也要留證據，才分得出誤擋還是真擋。
+                            triggerActionAt(anchorX, anchorY)
+                            // 驗證影格：停留點擊觸發時的實際眼區狀態（下一幀有臉時取）。
                             engine?.requestVerifyCapture(
-                                VerifyFrames.CAPTURE_EDGE_DENIED, progress
+                                VerifyFrames.CAPTURE_DWELL_FIRE, progress,
                             )
                         }
-                    } else {
-                        triggerActionAt(anchorX, anchorY)
-                        // 驗證影格：停留點擊觸發時的實際眼區狀態（下一幀有臉時取）。
-                        engine?.requestVerifyCapture(
-                            VerifyFrames.CAPTURE_DWELL_FIRE, progress
-                        )
+                        cooldownUntil = now + settings.cooldownMs
+                        dwellStart = now
+                        progress = 0f
+                        screenDwell.reset()
                     }
-                    cooldownUntil = now + settings.cooldownMs
-                    dwellStart = now
-                    progress = 0f
-                    screenDwell.reset()
                 }
+            }
             }
         }
 
@@ -808,6 +1127,9 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
     }
 
     private fun showReminder(now: Long) {
+        // 提醒 preempt 最高優先（STATE_DESIGN §5）：邊緣確認一併取消，
+        // 提醒結束後重新累積，不得沿用提醒前進度。
+        cancelEdgeGesture()
         reminderActive = true
         reminderShownAt = now
         reminderDwellAccumMs = 0L
@@ -944,6 +1266,307 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         }
     }
 
+    // ---- 邊緣手勢控制器接線（Phase 3 D3-2…D3-8） ----
+
+    /** 由現況設定組裝控制器設定（每幀新組，設定頁變更即時生效，不另起設定系統）。 */
+    private fun edgeConfig(): EdgeGestureConfig = EdgeGestureConfig(
+        enabled = settings.edgeGesturesEnabled,
+        topEnabled = settings.edgeTopEnabled,
+        bottomEnabled = settings.edgeBottomEnabled,
+        leftEnabled = settings.edgeLeftEnabled,
+        rightEnabled = settings.edgeRightEnabled,
+        dwellTimeMs = settings.dwellTimeMs,
+    )
+
+    /** 由同一幀的已算數據組裝控制器輸入（不自建樣本來源；特徵契約 22 維不動）。 */
+    private fun edgeFrame(
+        sample: GazeSample,
+        x: Float,
+        y: Float,
+        rawX: Double,
+        rawY: Double,
+        now: Long,
+    ): EdgeGestureFrame = EdgeGestureFrame(
+        filteredX = x,
+        filteredY = y,
+        rawX = rawX,
+        rawY = rawY,
+        facePresent = true,
+        eyesOpen = sample.leftOpen >= settings.blinkThreshold &&
+            sample.rightOpen >= settings.blinkThreshold,
+        featuresFinite = sample.features.size == GazeFeatureExtractor.DIM &&
+            sample.features.all { it.isFinite() },
+        imageDegraded = EyeImageMetrics.isDegraded(sample),
+        nowMs = now,
+        screenW = screenW,
+        screenH = screenH,
+        density = resources.displayMetrics.density,
+    )
+
+    /**
+     * 中斷進行中的邊緣手勢（D3-7／D3-8）：控制器強制回 IDLE，確認目標收掉、
+     * 不執行動作、不留殘留提示。呼叫點：臉遺失、影像降級、提醒上升沿、
+     * 面板／把手接管、PAUSED、RECOVERY／完全停止、校正交接、方向改變。
+     * 重新觸發鎖定不受影響（控制器 [EdgeGestureController.reset] 保留鎖定）。
+     */
+    private fun cancelEdgeGesture() {
+        val wasConfirming = edgeConfirmShowing
+        val decision = edgeController.reset()
+        cursorView?.hideConfirmTarget()
+        edgeConfirmShowing = false
+        if (decision is EdgeDecision.Cancelled) {
+            Log.d(TAG, "邊緣手勢已取消／已中斷：${decision.reason}")
+            if (wasConfirming) {
+                engine?.requestVerifyCapture(VerifyFrames.CAPTURE_EDGE_CONFIRM_CANCELLED)
+            }
+        }
+    }
+
+    /**
+     * 清除待執行意圖（STEP 3 薄守衛，DCL-18／DCL-11）：待發的雙擊第二下、
+     * 滑動起點、眨眼狀態、停留進度與進行中的邊緣手勢。只清「意圖」，
+     * 不停引擎、不關相機、不改流程態——中斷／暫停後恢復仍走既有路徑。
+     * 濾波歷史不在此列（臉遺失／恢復路徑另行重置，見臉遺失分支）。
+     * 只在主執行緒呼叫（全部呼叫點皆為主執行緒或 mainHandler 回呼）。
+     */
+    private fun cancelPendingGesture() {
+        cancelPendingDoubleTap()
+        // 集中派發守衛（DCL-04）：進行中手勢標記中斷，後到的舊回呼忽略；
+        // 本 helper 覆蓋暫停／停止／中斷／校正交接全部呼叫點。
+        dispatchGuard.onInterrupted()
+        swipeStartPoint = null
+        controlView?.swipeState = 0
+        controlView?.invalidate()
+        isBlinking = false
+        blinkStartTime = 0L
+        screenDwell.reset()
+        currentProgress = 0f
+        cancelEdgeGesture()
+    }
+
+    /** 取消待發的雙擊第二下（K-07）：具名 Runnable 持有，方可 removeCallbacks。 */
+    private fun cancelPendingDoubleTap() {
+        val pending = pendingDoubleTapSecond ?: return
+        pendingDoubleTapSecond = null
+        mainHandler.removeCallbacks(pending)
+    }
+
+    /** 顯示／更新二階段確認目標（中央偏下，淺色暖系；與提醒／重啟目標互斥）。 */
+    private fun showEdgeConfirm(edge: Edge, progress: Float) {
+        val target = edgeController.confirmTarget(
+            screenW, screenH, resources.displayMetrics.density,
+        )
+        val hint = if (edge == Edge.TOP) "注視這裡確認返回" else "注視這裡確認回首頁"
+        cursorView?.updateConfirmTarget(target.centerX, target.centerY, progress, hint)
+        edgeConfirmShowing = true
+    }
+
+    /** 檢查失敗原因只寫 Log（供診斷），絕不顯示數字／分數給使用者。 */
+    private fun logEdgeCheckFailures(report: EdgeCheckReport) {
+        val failures = listOf(
+            "Gaze Confidence" to report.gazeConfidence,
+            "Gaze Stability" to report.stability,
+            "Intent Confidence" to report.intentConfidence,
+        ).filter { it.second is EdgeCheckResult.Fail }
+            .joinToString("；") { (name, result) ->
+                "$name(${(result as EdgeCheckResult.Fail).reason})"
+            }
+        if (failures.isNotEmpty()) Log.d(TAG, "邊緣手勢檢查未通過：$failures")
+    }
+
+    // ---- RECOVERY_MODE：重啟目標與重啟驗證（D2-2／D2-3／D2-4） ----
+
+    /**
+     * 重啟目標的注視半徑：沿用提醒目標的既有常數（中央目標同一量級），
+     * 不新編數字。目標固定在螢幕中央。
+     */
+    private fun recoveryTargetRadiusPx(): Float = REMINDER_DWELL_RADIUS_PX
+
+    /**
+     * RECOVERY_MODE 每幀分支（只在主執行緒呼叫）。命中判定用獨立線性
+     * dwell 計時（秒數取 `settings.dwellTimeMs`），命中期間不跑一般 dwell、
+     * 不跑 `DwellTracker`（避免錨點污染）。目標只在臉 present 且雙眼睜開
+     * 時接受注視；臉遺失／閉眼時進度凍結不清零（沿用現況閉眼凍結語義）。
+     * 視線離開目標區即重設累積並重新武裝。
+     */
+    private fun updateRecoveryTarget(sample: GazeSample?, now: Long) {
+        val cursor = cursorView ?: return
+        val tx = screenW / 2f
+        val ty = screenH / 2f
+        val frozenProgress =
+            min(recoveryDwellAccumMs / settings.dwellTimeMs.toFloat(), 1f)
+        if (recoveryVerifying) {
+            cursor.updateRecoveryTarget(tx, ty, 1f, faceLost = false)
+            return
+        }
+        if (sample == null) {
+            // 臉遺失：進度凍結不清零，目標切為「看不到臉」文案（D-2 驗收 4，
+            // 不得顯示虛假可恢復狀態）；診斷紀錄沿用臉遺失幀格式，寫入同一段。
+            recoveryLastFrameAt = now
+            GazeLog.record(
+                this, settings.diagnosticLogging || settings.remoteMonitor,
+                remoteUpload = remoteUploadEnabled(),
+                face = false, features = null,
+                rawX = null, rawY = null, gainedX = null, gainedY = null,
+                curX = null, curY = null, sensitivity = settings.sensitivity,
+                offsetX = if (settings.conditionCorrection) appliedOffsetX else 0f,
+                offsetY = if (settings.conditionCorrection) appliedOffsetY else 0f,
+                lux = smoothedLux.takeIf { it.isFinite() && it >= 0f },
+            )
+            cursor.updateRecoveryTarget(tx, ty, frozenProgress, faceLost = true)
+            return
+        }
+        val m = model
+        if (m == null) {
+            // 無模型時算不出注視座標，目標永遠無法完成 dwell——不得讓使用者
+            // 對著一個不可能成功的目標注視：直接走驗證失敗路徑（ERROR＋原因）。
+            // 模型存在時的完整驗證仍在 dwell 滿時由 attemptRecovery 執行。
+            recoveryVerifying = true
+            failRecovery("校正模型無效，請重新校正")
+            return
+        }
+        val leftClosed = sample.leftOpen < settings.blinkThreshold
+        val rightClosed = sample.rightOpen < settings.blinkThreshold
+        if (leftClosed || rightClosed) {
+            // 閉眼（含單眼閉合）：凍結，不推進亦不取消，沿用主路徑語義。
+            recoveryLastFrameAt = now
+            cursor.updateRecoveryTarget(tx, ty, frozenProgress, faceLost = false)
+            return
+        }
+
+        // 注視座標沿用主路徑同一管線（預測→條件偏移→靈敏度增益→濾波→箝制），
+        // 只用來判定是否在目標區內，不驅動游標、不碰 hasValidCursor。
+        val (rawX, rawY) = m.predict(
+            sample.features, screenW, screenH,
+            sample.devicePitch, sample.deviceRoll,
+            settings.gyroCompensation, settings.distanceCompensation,
+        )
+        val effOffsetX = if (settings.conditionCorrection) appliedOffsetX else 0f
+        val effOffsetY = if (settings.conditionCorrection) appliedOffsetY else 0f
+        val gain = settings.sensitivity.toDouble()
+        val centerX = screenW / 2.0
+        val centerY = screenH / 2.0
+        val gainedX = centerX + (rawX + effOffsetX - centerX) * gain
+        val gainedY = centerY + (rawY + effOffsetY - centerY) * gain
+        val t = sample.timestampMs / 1000.0
+        val x = filterX.filter(gainedX, t).toFloat().coerceIn(0f, screenW - 1f)
+        val y = filterY.filter(gainedY, t).toFloat().coerceIn(0f, screenH - 1f)
+
+        // 診斷紀錄寫入同一段（沿用主路徑格式），不新增假數據欄位。
+        GazeLog.record(
+            this, settings.diagnosticLogging || settings.remoteMonitor,
+            remoteUpload = remoteUploadEnabled(),
+            face = true, features = sample.features,
+            rawX = rawX, rawY = rawY, gainedX = gainedX, gainedY = gainedY,
+            curX = x, curY = y, sensitivity = settings.sensitivity,
+            offsetX = effOffsetX, offsetY = effOffsetY,
+            lux = sample.ambientLux.takeIf { it.isFinite() && it >= 0f },
+            imageQuality = sample.eyeContrast.takeIf { it.isFinite() },
+            glassesHint = sample.specularRatio.takeIf { it.isFinite() },
+        )
+
+        val dt = (now - recoveryLastFrameAt).coerceIn(0L, 200L)
+        recoveryLastFrameAt = now
+        if (hypot(x - tx, y - ty) > recoveryTargetRadiusPx()) {
+            // 離開目標區：累積重設，並重新武裝（D2-4 武裝規則）。
+            recoveryDwellAccumMs = 0L
+            recoveryArmed = true
+            cursor.updateRecoveryTarget(tx, ty, 0f, faceLost = false)
+            return
+        }
+        if (!recoveryArmed) {
+            // 未武裝（重啟後視線未曾離開目標區）：凍結，不累積。
+            cursor.updateRecoveryTarget(tx, ty, frozenProgress, faceLost = false)
+            return
+        }
+        recoveryDwellAccumMs += dt
+        val progress = min(recoveryDwellAccumMs / settings.dwellTimeMs.toFloat(), 1f)
+        cursor.updateRecoveryTarget(tx, ty, progress, faceLost = false)
+        if (progress >= 1f) {
+            recoveryVerifying = true
+            attemptRecovery()
+        }
+    }
+
+    /**
+     * 重啟驗證序列（D2-3，D-2 驗收 6）。只在主執行緒呼叫；眼控 dwell 滿與
+     * Dashboard 手點恢復共用同一入口函式（D2-6）。
+     *
+     * 依序驗證：(a) 服務實例仍在、(b) 引擎仍在跑（否則 `startEngine()`）、
+     * (c) 校正模型有效——判斷部分走純函式 [RecoveryGate]，任一失敗進 ERROR
+     * 含原因；(d) 濾波器重置、錨點／進度／冷卻重設沿用 `startEngine` 內的
+     * 重置（引擎已在跑時顯式重設，不得沿用舊進度）。全部通過→清
+     * `inRecoveryMode`、模式回 TAP、面板恢復收合態、流程態 SERVICE_RUNNING。
+     * 不動 `startEngine` 本體、不動模型載入格式、不重新校正。
+     */
+    private fun attemptRecovery() {
+        val now = SystemClock.elapsedRealtime()
+        val activeId = CalibrationStore.getActiveProfileId(this)
+        val decision = RecoveryGate.evaluate(
+            RecoveryGateInput(
+                serviceAlive = instance === this,
+                engineRunning = engine != null,
+                modelValid = CalibrationStore.loadModel(this, activeId) != null,
+            ),
+        )
+        if (decision is RecoveryGateDecision.Deny) {
+            failRecovery(decision.reason)
+            return
+        }
+        val engineWasRunning = engine != null
+        if (!engineWasRunning) {
+            startEngine()
+        }
+        // 重啟後再驗一次：startEngine 可能同步失敗（引擎清為 null、進 ERROR）
+        // 或模型在兩次載入間失效；任一為真即失敗，不得靜默回到 TRACKING。
+        if (engine == null || model == null) {
+            failRecovery(
+                if (engine == null) "引擎啟動失敗" else "校正模型無效，請重新校正",
+            )
+            return
+        }
+        if (engineWasRunning) {
+            // 引擎本就跑著：顯式做 (d) 重置，與 startEngine 內的重置同一組。
+            filterX.reset()
+            filterY.reset()
+            reloadConditionState()
+        }
+        inRecoveryMode = false
+        recoveryVerifying = false
+        recoveryDwellAccumMs = 0L
+        // 武裝規則：重啟後視線須先離開目標區一次，下次進入 RECOVERY_MODE
+        // 才重新武裝（D2-4）。
+        recoveryArmed = false
+        currentMode = ActionMode.TAP
+        controlView?.activeMode = ActionMode.TAP
+        swipeStartPoint = null
+        controlView?.swipeState = 0
+        controlView?.invalidate()
+        controlView?.visibility = View.VISIBLE
+        setPanelExpanded(false)
+        cursorView?.hideRecoveryTarget()
+        screenDwell.reset()
+        currentProgress = 0f
+        anchorX = screenW / 2f
+        anchorY = screenH / 2f
+        dwellStart = now
+        cooldownUntil = now + settings.cooldownMs
+        syncFlowState(FlowEvent.RestartVerified, AppFlowState.SERVICE_RUNNING)
+    }
+
+    /** 重啟驗證任一失敗：清恢復旗標、藏目標、流程態 ERROR＋真實原因。 */
+    private fun failRecovery(reason: String) {
+        inRecoveryMode = false
+        recoveryVerifying = false
+        recoveryDwellAccumMs = 0L
+        cursorView?.hideRecoveryTarget()
+        cursorView?.setCursor(null)
+        syncFlowState(FlowEvent.Failure(reason), AppFlowState.ERROR)
+        mainHandler.post {
+            Toast.makeText(this, "無法重啟眼控：$reason", Toast.LENGTH_LONG).show()
+        }
+    }
+
     private fun triggerActionAt(x: Float, y: Float) {
         when (currentMode) {
             ActionMode.TAP -> {
@@ -1019,11 +1642,20 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, 500))
             .build()
-        dispatchGesture(gesture, object : GestureResultCallback() {
+        // 集中派發守衛（DCL-04）：ID 配對＋回傳值處理；過期 onCompleted 不閃光。
+        val token = dispatchGuard.begin()
+        val accepted = dispatchGesture(gesture, object : GestureResultCallback() {
             override fun onCompleted(g: GestureDescription?) {
-                cursorView?.post { cursorView?.flashClick() }
+                if (dispatchGuard.onCompleted(token)) {
+                    cursorView?.post { cursorView?.flashClick() }
+                }
+            }
+
+            override fun onCancelled(g: GestureDescription?) {
+                dispatchGuard.onCancelled(token)
             }
         }, null)
+        dispatchGuard.onDispatchReturned(token, accepted)
     }
 
     private fun performTap(x: Float, y: Float) {
@@ -1031,18 +1663,35 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, 60))
             .build()
-        dispatchGesture(gesture, object : GestureResultCallback() {
+        // 集中派發守衛（DCL-04）：同 performScroll。
+        val token = dispatchGuard.begin()
+        val accepted = dispatchGesture(gesture, object : GestureResultCallback() {
             override fun onCompleted(g: GestureDescription?) {
-                cursorView?.post { cursorView?.flashClick() }
+                if (dispatchGuard.onCompleted(token)) {
+                    cursorView?.post { cursorView?.flashClick() }
+                }
+            }
+
+            override fun onCancelled(g: GestureDescription?) {
+                dispatchGuard.onCancelled(token)
             }
         }, null)
+        dispatchGuard.onDispatchReturned(token, accepted)
     }
 
     private fun performDoubleTap(x: Float, y: Float) {
         performTap(x, y)
-        mainHandler.postDelayed({
+        // 第二下以具名 Runnable 持有（STEP 3 薄守衛，K-07）：中斷／暫停／
+        // 停止／臉遺失／校正交接時可經 cancelPendingDoubleTap 取消，不再
+        // 以匿名延遲在背景排隊執行。150 ms 間隔沿用現況值，不新編數字；
+        // 若 150 ms 內又有新的雙擊，舊的第二下以新的為準（先取消再排隊）。
+        cancelPendingDoubleTap()
+        val secondTap = Runnable {
+            pendingDoubleTapSecond = null
             performTap(x, y)
-        }, 150)
+        }
+        pendingDoubleTapSecond = secondTap
+        mainHandler.postDelayed(secondTap, 150)
     }
 
     private fun performLongPress(x: Float, y: Float) {
@@ -1050,11 +1699,20 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, 800))
             .build()
-        dispatchGesture(gesture, object : GestureResultCallback() {
+        // 集中派發守衛（DCL-04）：同 performScroll。
+        val token = dispatchGuard.begin()
+        val accepted = dispatchGesture(gesture, object : GestureResultCallback() {
             override fun onCompleted(g: GestureDescription?) {
-                cursorView?.post { cursorView?.flashClick() }
+                if (dispatchGuard.onCompleted(token)) {
+                    cursorView?.post { cursorView?.flashClick() }
+                }
+            }
+
+            override fun onCancelled(g: GestureDescription?) {
+                dispatchGuard.onCancelled(token)
             }
         }, null)
+        dispatchGuard.onDispatchReturned(token, accepted)
     }
 
     private fun performSwipe(x1: Float, y1: Float, x2: Float, y2: Float) {
@@ -1065,16 +1723,28 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, 500))
             .build()
-        dispatchGesture(gesture, object : GestureResultCallback() {
+        // 集中派發守衛（DCL-04）：同 performScroll。
+        val token = dispatchGuard.begin()
+        val accepted = dispatchGesture(gesture, object : GestureResultCallback() {
             override fun onCompleted(g: GestureDescription?) {
-                cursorView?.post { cursorView?.flashClick() }
+                if (dispatchGuard.onCompleted(token)) {
+                    cursorView?.post { cursorView?.flashClick() }
+                }
+            }
+
+            override fun onCancelled(g: GestureDescription?) {
+                dispatchGuard.onCancelled(token)
             }
         }, null)
+        dispatchGuard.onDispatchReturned(token, accepted)
     }
 
     override fun onDestroy() {
         if (instance === this) instance = null
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
+        cancelPendingDoubleTap()
+        // 服務銷毀：進行中手勢標記中斷，後到的舊回呼一律忽略、不重播。
+        dispatchGuard.onInterrupted()
         runCatching {
             getSharedPreferences(GazeSettings.PREFS_NAME, Context.MODE_PRIVATE)
                 .unregisterOnSharedPreferenceChangeListener(settingsListener)
@@ -1100,7 +1770,12 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
-    override fun onInterrupt() = Unit
+
+    override fun onInterrupt() {
+        // 系統中斷（STEP 3，DCL-18）：只清除待執行意圖，不停引擎、
+        // 不關相機、不改流程態；引擎／overlay 的生命週期仍由 onDestroy 管。
+        cancelPendingGesture()
+    }
 
 
     companion object {
@@ -1131,11 +1806,25 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
                     svc.cursorView?.setCursor(null)
                     // 提醒目標蓋在最上層，校正期間一併收掉，免得蓋住校正畫面
                     svc.cursorView?.hideReminderTarget()
+                    // 重啟目標同理：校正交接期間不得蓋住校正頁；累積重設，
+                    // 免得交接回來沿用舊進度立刻觸發重啟（協議本體不動，
+                    // 只收 overlay 與重設計時，與提醒目標同一處理）。
+                    svc.cursorView?.hideRecoveryTarget()
+                    // 校正交接期間邊緣手勢不得運作（D3-8）：進行中的手勢中斷，
+                    // 確認目標收掉；協議本體不動，只收 overlay 與重設計時。
+                    svc.cancelEdgeGesture()
+                    svc.recoveryDwellAccumMs = 0L
+                    svc.recoveryVerifying = false
+                    // 校正交接亦為中斷：待發的雙擊第二下與其他待執行意圖
+                    // 不得在校正期間排隊執行（STEP 3 薄守衛）。
+                    svc.cancelPendingGesture()
                     // 模式面板是常駐 overlay：暫停期間把它藏起來，否則會蓋住
                     // 校正／訓練頁右側的目標點（面板看得見但已停止反應）。
                     // 面板只在 onServiceConnected 建立一次、沒有重建路徑，
                     // 恢復時在 resumeAfterCalibration 設回 VISIBLE 即可。
                     svc.controlView?.visibility = View.GONE
+                    // 交接完成（回呼後）才進 CALIBRATING，見 STATE_DESIGN §2.1。
+                    svc.syncFlowState(FlowEvent.StartCalibration, AppFlowState.CALIBRATING)
                     onReleased()
                 }
             }.start()
@@ -1150,7 +1839,19 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
                 // 否則「重啟」看不見；其餘狀態回到預設的收合。
                 svc.controlView?.visibility = View.VISIBLE
                 svc.setPanelExpanded(svc.currentMode == ActionMode.PAUSED)
+                // RECOVERY_MODE 中去校正、交接回來仍是恢復態：面板維持隱藏，
+                // 只剩中央重啟目標（下一幀 RECOVERY 分支會重新顯示目標）。
+                if (svc.inRecoveryMode) svc.controlView?.visibility = View.GONE
                 svc.startEngine()
+                // 回原態：startEngine 已依成敗同步（SERVICE_RUNNING／ERROR／
+                // NOT_CALIBRATED）；只有它在 userStopped 時直接返回、未同步，
+                // 此時以事實推導補同步為 STOPPED。
+                if (svc.userStopped) {
+                    svc.syncFlowState(
+                        FlowEvent.StopCompletely,
+                        svc.deriveFlowState(hasModel = svc.model != null),
+                    )
+                }
             }
         }
 
@@ -1182,7 +1883,17 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             val cursorValid: Boolean,
             val paused: Boolean,
             val stopped: Boolean,
+            /**
+             * RECOVERY_MODE（D2-6 新增）：`stopTracking` 後、引擎續跑、
+             * 可注視重啟的狀態。與 [stopped] 嚴格區分：`stopped` 僅
+             * `stopCompletely`／`userStopped` 時為真（相機已關閉）。
+             */
+            val inRecoveryMode: Boolean,
             val hasModel: Boolean,
+            /** 流程層現態（Phase 3 D1-2 新增；舊欄位原樣保留）。 */
+            val flowState: AppFlowState,
+            /** ERROR 態的真實原因；非 ERROR 態時為 null。 */
+            val flowErrorReason: String?,
         )
 
         fun trackingSnapshot(): TrackingSnapshot? {
@@ -1194,8 +1905,64 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
                 cursorValid = lastCursorValid,
                 paused = svc.currentMode == ActionMode.PAUSED,
                 stopped = svc.userStopped,
+                inRecoveryMode = svc.inRecoveryMode,
                 hasModel = lastHasModel,
+                flowState = svc.flowState,
+                flowErrorReason =
+                    if (svc.flowState == AppFlowState.ERROR) svc.flowMachine.errorReason else null,
             )
+        }
+
+        /**
+         * 系統設定中的真實啟用狀態（唯讀，不寫入、不繞過授權）。
+         * 精確比對：按 :／; 切分後逐項取「/」前的套件名等值比對，與引導內
+         * 版本同一算法（第 4 步遺留 (b)：MainActivity 改為共用此函式，不再
+         * 子字串比對）。子字串比對會誤判套件名前綴相同的其他服務。
+         */
+        fun isServiceEnabled(context: Context): Boolean {
+            val enabled = Settings.Secure.getString(
+                context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+            ) ?: return false
+            return enabled.split(':', ';').any { entry ->
+                val item = entry.trim()
+                val sep = item.indexOf('/')
+                sep > 0 && item.substring(0, sep) == context.packageName
+            }
+        }
+
+        /**
+         * 服務啟動閘門（D1-14，純判斷、無副作用）：模型載入成功，且系統設定
+         * 真實啟用，且引擎上次同步啟動未失敗。
+         *
+         * 「引擎啟動成功」以「服務實例存在且流程態非 ERROR」判定：startEngine
+         * 同步失敗（例外／landmarker 建置失敗）會清引擎並進 ERROR（見
+         * startEngine 的 catch）；已停止／已暫停時引擎為 null 是預期狀態，
+         * 不視為失敗，resumeTracking 會重啟引擎。相機非同步綁定失敗無可觀測
+         * 信號（見 (d) 已知缺口），本閘門不宣稱覆蓋，改由 verifyServiceRunning
+         * 以樣本新鮮度擋下。呼叫端須依序診斷缺哪一項（見 MainActivity 開始鈕），
+         * 不得只憑此布林值顯示含糊提示。
+         */
+        fun canStartTracking(context: Context): Boolean {
+            if (!CalibrationStore.exists(
+                    context, CalibrationStore.getActiveProfileId(context),
+                )
+            ) return false
+            if (!isServiceEnabled(context)) return false
+            val snap = trackingSnapshot() ?: return false
+            return snap.flowState != AppFlowState.ERROR
+        }
+
+        /**
+         * 驗證服務實際運作（D1-15，純判斷、無副作用）：快照非 null，且 3 秒內
+         * 有樣本（現況 SAMPLE_FRESH_MS），且有模型。臉移出畫面時引擎仍持續
+         * 送 null 樣本、時間戳照樣更新，故「有新鮮樣本」不等於「看得到臉」；
+         * 本函式只驗「服務在跑」，不驗臉部狀態（定義見 PLAN D1-15，不得加
+         * facePresent 改寫定義）。等待快照新鮮不設逾時：呼叫端以手動重試
+         * 驗證，不得自動判定失敗。
+         */
+        fun verifyServiceRunning(): Boolean {
+            val snap = trackingSnapshot() ?: return false
+            return snap.sampleFresh && snap.hasModel
         }
 
         /** Dashboard「暫停眼控」：切到 PAUSED 模式（游標隱藏，只剩面板「重啟」鍵）。 */
@@ -1205,17 +1972,33 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
                 svc.currentMode = ActionMode.PAUSED
                 svc.controlView?.activeMode = ActionMode.PAUSED
                 svc.controlView?.invalidate()
+                // 暫停即清除待執行意圖（STEP 3，DCL-18）：舊 dwell／滑動
+                // 起點／眨眼狀態／待發雙擊第二下不得在恢復後沿用。
+                svc.cancelPendingGesture()
                 // 暫停時把面板展開，否則「重啟」鍵藏在把手後面看不到。
                 svc.setPanelExpanded(true)
                 svc.cursorView?.setCursor(null)
             }
         }
 
-        /** Dashboard「開始眼控」：解除暫停／解除停止，引擎未跑就啟動。 */
+        /** Dashboard「開始眼控」：解除暫停／解除完全停止，引擎未跑就啟動。
+         *
+         * RECOVERY_MODE 時不走本函式的旗標語義：改走 D2-3 同一驗證序列
+         *（[resumeFromRecovery]，見下），避免手點與眼控兩條恢復路徑語義打架；
+         * 此處的轉送只是入口共用，恢復本身由 [GazeAccessibilityService.attemptRecovery]
+         * 執行。面板可見性一併恢復（RECOVERY_MODE 入口曾將面板藏起）。 */
         fun resumeTracking() {
             val svc = instance ?: return
             svc.mainHandler.post {
+                if (svc.inRecoveryMode) {
+                    if (!svc.recoveryVerifying && !svc.pausedForCalibration) {
+                        svc.recoveryVerifying = true
+                        svc.attemptRecovery()
+                    }
+                    return@post
+                }
                 svc.userStopped = false
+                svc.controlView?.visibility = View.VISIBLE
                 if (svc.currentMode == ActionMode.PAUSED) {
                     svc.currentMode = ActionMode.TAP
                     svc.controlView?.activeMode = ActionMode.TAP
@@ -1226,11 +2009,76 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             }
         }
 
-        /** Dashboard「停止追蹤」：停引擎、關相機、藏游標；直到按「開始眼控」才恢復。 */
+        /**
+         * Dashboard 手點恢復（RECOVERY_MODE，D2-6）：走 D2-3 同一驗證序列，
+         * 與眼控 dwell 滿的入口函式共用（[GazeAccessibilityService.attemptRecovery]）。
+         * 校正交接期間不嘗試（相機歸校正頁所有）。
+         */
+        fun resumeFromRecovery() {
+            val svc = instance ?: return
+            svc.mainHandler.post {
+                if (!svc.inRecoveryMode || svc.recoveryVerifying ||
+                    svc.pausedForCalibration || svc.userStopped
+                ) return@post
+                svc.recoveryVerifying = true
+                svc.attemptRecovery()
+            }
+        }
+
+        /**
+         * Dashboard「停止眼控」（D2-1 改語義）：立 `inRecoveryMode`、不停止
+         * 引擎、不清 `userStopped`；游標隱藏、面板隱藏、顯示重啟目標
+         * （D2-2）；一般輸入由 `onSampleOnMainThread` 的 RECOVERY 分支拒絕。
+         * 相機續跑，隱私告知見 D2-5 三處文案（對話框／狀態列／目標副文字）。
+         * 已完全停止／已在恢復態／校正交接期間呼叫時不做事。
+         */
         fun stopTracking() {
+            val svc = instance ?: return
+            svc.mainHandler.post {
+                if (svc.userStopped || svc.inRecoveryMode || svc.pausedForCalibration) return@post
+                svc.inRecoveryMode = true
+                svc.recoveryDwellAccumMs = 0L
+                svc.recoveryLastFrameAt = SystemClock.elapsedRealtime()
+                svc.recoveryVerifying = false
+                // recoveryArmed 沿用現值：追蹤期間視線已離開目標區即為 true；
+                // 若仍停在目標區內，RECOVERY 分支的未武裝凍結會等它先離開。
+                svc.hasValidCursor = false
+                svc.cursorView?.setCursor(null)
+                svc.dismissReminder(markSkipped = false)
+                // 進入 RECOVERY_MODE：進行中的邊緣手勢中斷（D3-8），確認目標收掉。
+                svc.cancelEdgeGesture()
+                // 停止即清除待執行意圖（STEP 3，DCL-20）：雙擊第二下、
+                // 滑動起點、眨眼狀態不得在重啟後重播。
+                svc.cancelPendingGesture()
+                svc.controlView?.visibility = View.GONE
+                svc.controlView?.setHover(-1, 0f)
+                svc.controlView?.setHandleProgress(0f)
+                svc.hoverBtnIndex = -1
+                svc.hoverStart = 0L
+                svc.handleHoverStart = 0L
+                svc.screenDwell.reset()
+                svc.currentProgress = 0f
+                svc.cursorView?.updateRecoveryTarget(
+                    svc.screenW / 2f, svc.screenH / 2f, 0f, faceLost = false,
+                )
+                svc.syncFlowState(FlowEvent.StopEyeControl, AppFlowState.RECOVERY_MODE)
+            }
+        }
+
+        /**
+         * Dashboard「完全停止」（D2-1 新增）：現況 `stopTracking` 的完整本體
+         * 原樣搬入（立 `userStopped`、背景停引擎、清狀態），另加
+         * `inRecoveryMode = false` 與重啟目標收掉。引擎停止、相機釋放，
+         * 眼睛無法恢復，須手點「開始眼控」。
+         *
+         * 已知缺口 K-30：`userStopped`／`inRecoveryMode` 未持久化，行程重啟
+         * 即丟失，維持現況並在旗標宣告處明示，不得宣稱為已修復。
+         */
+        fun stopCompletely() {
             val svc = instance ?: return
             // 先立旗標擋住 startEngine，避免停表期間被重啟；停表本身放背景執行緒
             // （engine.stop() 會阻塞等分析執行緒排空，不可卡主執行緒）。
+            svc.inRecoveryMode = false
             svc.userStopped = true
             Thread {
                 val target = svc.engine
@@ -1243,10 +2091,24 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
                     lastSampleAtMs = 0L
                     svc.cursorView?.setCursor(null)
                     svc.cursorView?.hideReminderTarget()
+                    svc.cursorView?.hideRecoveryTarget()
+                    // 完全停止：進行中的邊緣手勢中斷（D3-8），確認目標收掉。
+                    svc.cancelEdgeGesture()
+                    // 完全停止亦清除待執行意圖（STEP 3）：雙擊第二下、
+                    // 滑動起點、眨眼狀態不得殘留至下次啟動。
+                    svc.cancelPendingGesture()
+                    svc.recoveryVerifying = false
+                    svc.recoveryDwellAccumMs = 0L
                     svc.reloadConditionState()
                     // 停止期間按了開始、userStopped 已被清掉：引擎已被置 null，在此重啟，
                     // 否則狀態會停在「未停止、無引擎、無路徑重啟」的死角。
                     if (!svc.userStopped && svc.engine == null) svc.startEngine()
+                    // 停止完成才同步為 STOPPED。停止期間已按開始且引擎重啟時，
+                    // startEngine 已同步狀態，此處不再覆蓋（ERROR／SERVICE_RUNNING
+                    // 皆以其為準）。
+                    if (svc.userStopped) {
+                        svc.syncFlowState(FlowEvent.StopCompletely, AppFlowState.STOPPED)
+                    }
                 }
             }.start()
         }
@@ -1268,9 +2130,8 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         // 展開後閒置 4 秒且視線不在面板上也收回（暫停模式除外）。
         private const val PANEL_COLLAPSE_AFTER_SELECT_MS = 1200L
         private const val PANEL_AUTO_COLLAPSE_MS = 4000L
-        // 邊緣手勢的原始預測容忍邊界：原始預測超出螢幕此比例以外，視為外推失準、
-        // 不得觸發邊緣手勢（見螢幕停留觸發處的門檻說明）。
-        private const val EDGE_RAW_MARGIN_FRACTION = 0.15
+        // 邊緣手勢門檻（含原始預測 ±15% 容忍邊界）已集中至 EdgeGestureController
+        // 的 companion 常數（D-3「門檻集中管理」），服務端不再留副本。
         // 行為參數（停留時間、冷卻、眨眼、平滑）統一由 GazeSettings 提供，此處不再寫死。
     }
 }

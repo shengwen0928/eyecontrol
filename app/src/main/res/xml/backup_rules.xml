@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 系統備份排除規則（STEP 3，R-3）：只排除三類診斷檔案目錄——
+     診斷 CSV（GazeLog.DIR = "gaze-logs"）、眼區驗證影格
+     （VerifyFrames.FRAMES_DIR = "verify-frames"）、閃退報告
+     （CrashReporter.DIR = "crash-reports"），皆位於 filesDir 下。
+     SharedPreferences（校正模型、條件歷史、使用者設定）一律不排除：
+     備份還原後校正與設定維持現況行為，不得以本規則改變。
+     API 31+ 的 dataExtractionRules 見同目錄 data_extraction_rules.xml，
+     兩者排除範圍必須一致。合併後清單與實機備份還原行為待 CI／實機驗證。 -->
+<full-backup-content>
+    <exclude domain="file" path="gaze-logs" />
+    <exclude domain="file" path="verify-frames" />
+    <exclude domain="file" path="crash-reports" />
+</full-backup-content>

@@ -71,20 +71,36 @@ class SettingsActivity : AppCompatActivity() {
         binding.switchDistance.isChecked = s.distanceCompensation
         binding.switchCondition.isChecked = s.conditionCorrection
         binding.switchIris.isChecked = s.irisRefinement
+        binding.switchBlinkClick.isChecked = s.blinkClickEnabled
         binding.switchDiag.isChecked = s.diagnosticLogging
         binding.switchRemote.isChecked = s.remoteMonitor
         // Play 商店版無網路權限，遠端監控無法上傳，整列隱藏。
         binding.rowRemote.visibility =
             if (BuildConfig.REMOTE_MONITOR_ENABLED) View.VISIBLE else View.GONE
+        // 邊緣手勢（Phase 3 D3-4）：總開關＋四邊分項開關，預設全開（現況行為）。
+        binding.switchEdgeGestures.isChecked = s.edgeGesturesEnabled
+        binding.switchEdgeTop.isChecked = s.edgeTopEnabled
+        binding.switchEdgeBottom.isChecked = s.edgeBottomEnabled
+        binding.switchEdgeLeft.isChecked = s.edgeLeftEnabled
+        binding.switchEdgeRight.isChecked = s.edgeRightEnabled
+        refreshEdgeGestureRows()
+        binding.switchEdgeGestures.setOnCheckedChangeListener { _, _ -> refreshEdgeGestureRows() }
 
         // 開關整列可點：點列身切換開關，點開關本身由開關自己處理，不會重複觸發。
         binding.rowCondition.setOnClickListener { binding.switchCondition.toggle() }
         binding.rowDistance.setOnClickListener { binding.switchDistance.toggle() }
         binding.rowGyro.setOnClickListener { binding.switchGyro.toggle() }
         binding.rowIris.setOnClickListener { binding.switchIris.toggle() }
+        binding.rowBlinkClick.setOnClickListener { binding.switchBlinkClick.toggle() }
         binding.rowDiag.setOnClickListener { binding.switchDiag.toggle() }
         binding.rowRemote.setOnClickListener { binding.switchRemote.toggle() }
         binding.rowDiagSummary.setOnClickListener { showDiagSummary() }
+        // 邊緣手勢列可點：點列身切換開關；總開關關閉時分項列停用（不可點）。
+        binding.rowEdgeGestures.setOnClickListener { binding.switchEdgeGestures.toggle() }
+        binding.rowEdgeTop.setOnClickListener { binding.switchEdgeTop.toggle() }
+        binding.rowEdgeBottom.setOnClickListener { binding.switchEdgeBottom.toggle() }
+        binding.rowEdgeLeft.setOnClickListener { binding.switchEdgeLeft.toggle() }
+        binding.rowEdgeRight.setOnClickListener { binding.switchEdgeRight.toggle() }
 
         // 基本：情境切換（點一下換下一個，三個情境循環）。
         binding.rowProfile.setOnClickListener {
@@ -192,6 +208,24 @@ class SettingsActivity : AppCompatActivity() {
         binding.valModelVersion.text = storedModelVersionText()
     }
 
+    /**
+     * 邊緣手勢分項列的啟用狀態：總開關關閉時分項列停用（語義：總關＝全部停用，
+     * PLAN D3-3）。停用時列身不可點、開關不可撥，視覺上由系統 disabled 呈現。
+     */
+    private fun refreshEdgeGestureRows() {
+        val enabled = binding.switchEdgeGestures.isChecked
+        listOf(
+            binding.rowEdgeTop to binding.switchEdgeTop,
+            binding.rowEdgeBottom to binding.switchEdgeBottom,
+            binding.rowEdgeLeft to binding.switchEdgeLeft,
+            binding.rowEdgeRight to binding.switchEdgeRight,
+        ).forEach { (row, switch) ->
+            row.isEnabled = enabled
+            switch.isEnabled = enabled
+            row.alpha = if (enabled) 1f else 0.45f
+        }
+    }
+
     private fun refreshProfileViews() {
         binding.valProfile.text =
             CalibrationStore.profileName(CalibrationStore.getActiveProfileId(this))
@@ -260,6 +294,12 @@ class SettingsActivity : AppCompatActivity() {
             diagnosticLogging = binding.switchDiag.isChecked,
             remoteMonitor = binding.switchRemote.isChecked,
             irisRefinement = binding.switchIris.isChecked,
+            blinkClickEnabled = binding.switchBlinkClick.isChecked,
+            edgeGesturesEnabled = binding.switchEdgeGestures.isChecked,
+            edgeTopEnabled = binding.switchEdgeTop.isChecked,
+            edgeBottomEnabled = binding.switchEdgeBottom.isChecked,
+            edgeLeftEnabled = binding.switchEdgeLeft.isChecked,
+            edgeRightEnabled = binding.switchEdgeRight.isChecked,
         ).clamped()
         s.save(this)
         Toast.makeText(this, "設定已儲存", Toast.LENGTH_SHORT).show()
@@ -281,8 +321,15 @@ class SettingsActivity : AppCompatActivity() {
         binding.switchDistance.isChecked = d.distanceCompensation
         binding.switchCondition.isChecked = d.conditionCorrection
         binding.switchIris.isChecked = d.irisRefinement
+        binding.switchBlinkClick.isChecked = d.blinkClickEnabled
         binding.switchDiag.isChecked = d.diagnosticLogging
         binding.switchRemote.isChecked = d.remoteMonitor
+        binding.switchEdgeGestures.isChecked = d.edgeGesturesEnabled
+        binding.switchEdgeTop.isChecked = d.edgeTopEnabled
+        binding.switchEdgeBottom.isChecked = d.edgeBottomEnabled
+        binding.switchEdgeLeft.isChecked = d.edgeLeftEnabled
+        binding.switchEdgeRight.isChecked = d.edgeRightEnabled
+        refreshEdgeGestureRows()
         Toast.makeText(this, "已恢復預設值（按儲存才生效）", Toast.LENGTH_SHORT).show()
     }
 

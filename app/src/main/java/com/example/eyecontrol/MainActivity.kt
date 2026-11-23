@@ -18,7 +18,6 @@ import android.provider.Settings
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.example.eyecontrol.databinding.ActivityMainBinding
@@ -89,14 +88,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val requestCamera =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (!granted) {
-                Toast.makeText(this, "沒有相機權限就無法追蹤眼球", Toast.LENGTH_LONG).show()
-            }
-            refreshStatus()
-        }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -112,9 +103,6 @@ class MainActivity : AppCompatActivity() {
 
         showCrashReportIfPending()
 
-        binding.btnCamera.setOnClickListener {
-            requestCamera.launch(Manifest.permission.CAMERA)
-        }
         binding.btnCalibrate.setOnClickListener {
             if (!hasCameraPermission()) {
                 Toast.makeText(this, "請先授予相機權限", Toast.LENGTH_SHORT).show()
@@ -123,12 +111,6 @@ class MainActivity : AppCompatActivity() {
                 intent.putExtra(CalibrationActivity.EXTRA_PROFILE_ID, selectedProfileId())
                 startActivity(intent)
             }
-        }
-        binding.btnAccessibility.setOnClickListener {
-            // 無障礙服務只能由使用者在系統設定中手動開啟（與引導第 2 步一致：
-            // 未校正也可以先開服務，校正之後再做）。
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            Toast.makeText(this, "請在清單中找到「凝視」並開啟", Toast.LENGTH_LONG).show()
         }
         binding.btnSettings.setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
@@ -143,21 +125,70 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.btnStartTracking.setOnClickListener {
+            // D2-6：RECOVERY_MODE 時「開始眼控」鈕為「已可注視重啟」提示態，
+            // 手點恢復走 D2-3 同一驗證序列（resumeFromRecovery），不直接
+            // resumeTracking；驗證失敗時由服務端顯示 ERROR 原因。
+            if (GazeAccessibilityService.trackingSnapshot()?.inRecoveryMode == true) {
+                GazeAccessibilityService.resumeFromRecovery()
+                Toast.makeText(this, "正在重啟眼控…", Toast.LENGTH_SHORT).show()
+                refreshStatus()
+                return@setOnClickListener
+            }
+            // D1-14 啟動閘門：先以 canStartTracking() 判定，全過才恢復／開始；
+            // 未過時依序診斷缺哪一項（未校正→導引校正；已校正但服務未開→
+            // 系統設定；引擎失敗→原因文字），Toast＋狀態列（refreshStatus）
+            // 皆明示，不得只說含糊提示。順序與第 2 步「未校正先導引去校正」
+            // 銜接：未校正不論服務開否，一律先導引去校正。
+            if (GazeAccessibilityService.canStartTracking(this)) {
+                GazeAccessibilityService.resumeTracking()
+                Toast.makeText(this, "眼控已開始", Toast.LENGTH_SHORT).show()
+                refreshStatus()
+                return@setOnClickListener
+            }
+            val activeId = selectedProfileId()
+            val profileName = CalibrationStore.profileName(activeId)
+            if (!CalibrationStore.exists(this, activeId)) {
+                Toast.makeText(
+                    this,
+                    "請先完成「$profileName」情境的校正，再開始眼控",
+                    Toast.LENGTH_SHORT,
+                ).show()
+                if (!hasCameraPermission()) {
+                    Toast.makeText(this, "請先授予相機權限", Toast.LENGTH_SHORT).show()
+                } else {
+                    val intent = Intent(this, CalibrationActivity::class.java)
+                    intent.putExtra(CalibrationActivity.EXTRA_PROFILE_ID, activeId)
+                    startActivity(intent)
+                }
+                refreshStatus()
+                return@setOnClickListener
+            }
             if (!isServiceEnabled()) {
                 Toast.makeText(this, "請先開啟無障礙服務", Toast.LENGTH_SHORT).show()
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                refreshStatus()
                 return@setOnClickListener
             }
-            if (!CalibrationStore.exists(this, selectedProfileId())) {
+            val snap = GazeAccessibilityService.trackingSnapshot()
+            if (snap == null) {
                 Toast.makeText(
                     this,
-                    "請先完成「${CalibrationStore.profileName(selectedProfileId())}」情境的校正",
+                    "眼控服務尚未啟動，請確認已在系統設定開啟「凝視」",
                     Toast.LENGTH_SHORT,
                 ).show()
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                refreshStatus()
                 return@setOnClickListener
             }
-            GazeAccessibilityService.resumeTracking()
-            Toast.makeText(this, "眼控已開始", Toast.LENGTH_SHORT).show()
+            if (snap.flowState == AppFlowState.ERROR) {
+                val reason = snap.flowErrorReason ?: "發生錯誤"
+                Toast.makeText(this, "無法開始眼控：$reason", Toast.LENGTH_LONG).show()
+                refreshStatus()
+                return@setOnClickListener
+            }
+            // 閘門未過、但以上三項皆通過（狀態在兩次讀取間變化）：不靜默，
+            // 以狀態列文字為準，請使用者看上方狀態說明。
+            Toast.makeText(this, "目前無法開始眼控，請看上方狀態說明", Toast.LENGTH_SHORT).show()
             refreshStatus()
         }
         binding.btnPauseTracking.setOnClickListener {
@@ -175,11 +206,16 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
             AlertDialog.Builder(this)
-                .setTitle("停止追蹤？")
-                .setMessage("停止後相機會關閉、游標隱藏，要再按「開始眼控」才恢復。")
-                .setPositiveButton("停止追蹤") { _, _ ->
+                .setTitle("停止眼控？")
+                .setMessage("停止眼控後，相機會繼續開著等你用注視重啟；要完全關閉相機，請選「完全停止」。")
+                .setPositiveButton("停止眼控") { _, _ ->
                     GazeAccessibilityService.stopTracking()
-                    Toast.makeText(this, "追蹤已停止", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "眼控已停止，注視中央目標可重啟", Toast.LENGTH_SHORT).show()
+                    refreshStatus()
+                }
+                .setNeutralButton("完全停止") { _, _ ->
+                    GazeAccessibilityService.stopCompletely()
+                    Toast.makeText(this, "已完全停止，相機已關閉", Toast.LENGTH_SHORT).show()
                     refreshStatus()
                 }
                 .setNegativeButton("取消", null)
@@ -283,12 +319,12 @@ class MainActivity : AppCompatActivity() {
         ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
             PackageManager.PERMISSION_GRANTED
 
-    private fun isServiceEnabled(): Boolean {
-        val enabled = Settings.Secure.getString(
-            contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
-        ) ?: return false
-        return enabled.contains("$packageName/")
-    }
+    /**
+     * 系統設定中的真實啟用狀態：共用服務端的精確比對實作（第 4 步遺留 (b)，
+     * 與引導內版本同一算法），不再子字串比對。唯讀，不寫入、不繞過授權。
+     */
+    private fun isServiceEnabled(): Boolean =
+        GazeAccessibilityService.isServiceEnabled(this)
 
     private fun refreshStatus() {
         val camOk = hasCameraPermission()
@@ -297,14 +333,31 @@ class MainActivity : AppCompatActivity() {
         val calibrated = CalibrationStore.exists(this, activeId)
         val snap = GazeAccessibilityService.trackingSnapshot()
 
-        // ---- 副標題：一句話總覽 ----
+        // ---- 副標題：一句話總覽（吃 snapshot.flowState，文字見 STATE_DESIGN §7） ----
+        // 優先序：停止／錯誤／重啟／校正等流程態優先於「未校正／服務未開」的
+        // 靜態檢查；未校正優先於服務未開（D-1 順序：先校正、後啟用服務）。
+        // RECOVERY_MODE 由第 5 步 D2-1 接線（stopTracking→RECOVERY_MODE、
+        // stopCompletely→STOPPED，stopped 僅完全停止時為真，不得混用）；
+        // WAITING_ACCESSIBILITY
+        // 的兩句 §7 文字由「服務尚未開啟」與「尚未收到追蹤畫面」兩分支覆蓋。
+        val flowState = snap?.flowState
         binding.statusText.text = when {
             !camOk -> "先授予相機權限，即可開始校正。"
+            snap?.stopped == true || flowState == AppFlowState.STOPPED ->
+                "已完全停止，相機已關閉。"
+            flowState == AppFlowState.ERROR ->
+                "${snap?.flowErrorReason ?: "發生錯誤"}。已完成項目保留。"
+            flowState == AppFlowState.RECOVERY_MODE ->
+                "眼控已停止，注視中央目標可重啟（相機運作中）。"
+            flowState == AppFlowState.CALIBRATING -> "校正進行中，服務已暫停。"
+            flowState == AppFlowState.CALIBRATED -> calibratedStatusText(activeId)
+            flowState == AppFlowState.NOT_CALIBRATED || !calibrated ->
+                "尚未校正「${CalibrationStore.profileName(activeId)}」情境。先完成校正，才能開始眼控。"
             !svcOk -> "服務尚未開啟，點「開啟無障礙服務」。"
-            !calibrated -> "服務已開啟，尚未校正「${CalibrationStore.profileName(activeId)}」情境。"
-            snap?.stopped == true -> "眼控已停止，相機已關閉。"
             snap?.paused == true -> "眼控已暫停，游標隱藏中。"
-            snap != null && snap.sampleFresh && snap.facePresent -> "眼控運作中。"
+            snap == null -> "服務已開啟，但尚未收到追蹤畫面。"
+            !snap.sampleFresh -> "服務已開啟，但尚未收到追蹤畫面。"
+            snap.facePresent -> "眼控運作中。"
             else -> "眼控運作中，等待臉部出現在前鏡頭前。"
         }
 
@@ -332,7 +385,7 @@ class MainActivity : AppCompatActivity() {
             unknown = !faceKnown,
         )
         val trackingOk = faceKnown && snap.facePresent && snap.cursorValid && snap.hasModel &&
-            !snap.paused && !snap.stopped
+            !snap.paused && !snap.stopped && !snap.inRecoveryMode
         setRow(
             binding.dotTracking, binding.valTracking,
             trackingOk,
@@ -341,6 +394,7 @@ class MainActivity : AppCompatActivity() {
                 snap == null -> "未知（服務未開啟）"
                 !snap.sampleFresh -> "未知（無新畫面）"
                 snap.stopped -> "已停止"
+                snap.inRecoveryMode -> "眼控已停止"
                 snap.paused -> "已暫停"
                 !snap.facePresent -> "等待臉部"
                 !snap.hasModel -> "尚未載入校正模型"
@@ -379,11 +433,17 @@ class MainActivity : AppCompatActivity() {
         setRow(
             binding.dotQuality, binding.valQuality,
             trackingOk,
-            "穩定",
+            // 無獨立的即時品質量測（見類別註解），只描述追蹤狀態，不顯示分數、
+            // 不用「穩定」二字（K-31）。
+            "追蹤中",
             when {
                 snap == null -> "未知（服務未開啟）"
                 !snap.sampleFresh -> "未知（無新畫面）"
+                snap.stopped -> "已停止"
+                snap.inRecoveryMode -> "眼控已停止"
+                snap.paused -> "已暫停"
                 !snap.facePresent -> "等待臉部"
+                !snap.hasModel -> "尚未載入校正模型"
                 else -> "定位中"
             },
             unknown = !faceKnown,
@@ -397,6 +457,7 @@ class MainActivity : AppCompatActivity() {
                 !svcOk -> "目前不行（服務未開啟）"
                 !calibrated -> "目前不行（尚未校正）"
                 snap?.stopped == true -> "目前不行（已停止追蹤）"
+                snap?.inRecoveryMode == true -> "目前不行（眼控已停止，注視中央目標可重啟）"
                 snap?.paused == true -> "目前不行（已暫停）"
                 !faceKnown -> "目前不行（狀態未知）"
                 !snap.facePresent -> "目前不行（找不到臉部）"
@@ -425,12 +486,56 @@ class MainActivity : AppCompatActivity() {
         binding.valDistanceSummary.text = if (s.distanceCompensation) "開啟" else "關閉"
 
         // ---- 操作按鈕狀態：服務實例不存在或狀態不適用時直接 disable，不留空轉的假按鈕 ----
-        // 開始：只在「已暫停／已停止」時有意義；運作中或服務根本沒起來時禁用。
-        binding.btnStartTracking.isEnabled = svcOk && calibrated &&
-            snap != null && (snap.stopped || snap.paused)
+        // 開始（D1-14）：只在「眼控運作中」時禁用；閘門未過（未校正／服務未開／
+        // 引擎失敗／尚未收到畫面）時保持可按，點按後由閘門診斷並導引——第 2 步
+        // 「只在已暫停／已停止時啟用」的規則會讓閘門診斷分支永遠按不到，
+        // 本步改為「運作中以外皆可按」。暫停／停止鈕維持既有規則。
+        val trackingRunning = snap != null && !snap.stopped && !snap.paused &&
+            !snap.inRecoveryMode &&
+            snap.flowState == AppFlowState.SERVICE_RUNNING
+        // D2-6：RECOVERY_MODE 時「開始眼控」鈕改為「已可注視重啟」提示態
+        // （保持可按，手點走同一驗證序列）；其餘狀態恢復原文字。
+        if (snap?.inRecoveryMode == true) {
+            binding.btnStartTracking.text = "已可注視重啟"
+            binding.btnStartTracking.contentDescription = "已可注視重啟，點按以手動驗證重啟"
+        } else {
+            binding.btnStartTracking.text = "開始眼控"
+            binding.btnStartTracking.contentDescription = "開始眼控"
+        }
+        binding.btnStartTracking.isEnabled = !trackingRunning
         binding.btnPauseTracking.isEnabled = svcOk &&
-            snap != null && !snap.paused && !snap.stopped
+            snap != null && !snap.paused && !snap.stopped && !snap.inRecoveryMode
         binding.btnStopTracking.isEnabled = svcOk && snap != null && !snap.stopped
+    }
+
+    /**
+     * CALIBRATED 態的狀態列文字（STATE_DESIGN §7）：留一法誤差＋等級＋上次校正天數，
+     * 數字全部來自 CalibrationStore 的真實存檔。calibratedAt 為 0（舊版遷移）或
+     * 留一法誤差未知時，如實寫「未知」，不編造。
+     */
+    private fun calibratedStatusText(activeId: String): String {
+        val profileName = CalibrationStore.profileName(activeId)
+        val meta = CalibrationStore.getMeta(this, activeId)
+        val loo = meta?.looErrorPx
+        val looText = if (loo != null && loo.isFinite()) {
+            val rating = when {
+                loo < 60 -> "優秀"
+                loo < 120 -> "良好"
+                loo < 200 -> "普通"
+                else -> "較差，建議重校"
+            }
+            "留一法誤差 ${"%.0f".format(loo)} px，$rating"
+        } else {
+            "留一法誤差未知"
+        }
+        val whenText = if (meta != null && meta.calibratedAt > 0L) {
+            val days = ((System.currentTimeMillis() - meta.calibratedAt) / 86_400_000L)
+                .coerceAtLeast(0L)
+            "上次校正：${days} 天前。"
+        } else {
+            "上次校正時間未知。"
+        }
+        return "已校正「$profileName」情境（$looText）。$whenText"
     }
 
     /**

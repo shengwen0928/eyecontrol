@@ -17,6 +17,13 @@ data class GazeSettings(
     val blinkMinMs: Long = DEFAULT_BLINK_MIN_MS,
     val blinkMaxMs: Long = DEFAULT_BLINK_MAX_MS,
     val blinkThreshold: Double = DEFAULT_BLINK_THRESHOLD,
+    /**
+     * 眨眼點擊獨立開關（STEP 3，DCL-13 最小部分）：預設關閉。
+     * 個人化意圖校正＋品質評估的啟用閘門尚未實作（待批 P-05），
+     * 本開關開啟不等於該閘門已通過；閘門落地前，開啟即以現況
+     * 時間窗判定，不得宣稱為已通過意圖校正。
+     */
+    val blinkClickEnabled: Boolean = false,
     val filterMinCutoff: Double = DEFAULT_FILTER_MIN_CUTOFF,
     val filterBeta: Double = DEFAULT_FILTER_BETA,
     /**
@@ -59,6 +66,19 @@ data class GazeSettings(
      * （舊模型配新特徵會失準）。影像只在裝置端即時量測，不儲存、不上傳。
      */
     val irisRefinement: Boolean = false,
+    /**
+     * 邊緣手勢總開關（Phase 3 D3-4，PLAN D3-3）：關閉時全部邊緣手勢停用。
+     * 預設開啟——現況已有邊緣手勢，預設關閉會改變現況行為，不得擅改。
+     */
+    val edgeGesturesEnabled: Boolean = true,
+    /**
+     * 邊緣手勢分項開關（Phase 3 D3-4）：四邊各自獨立開關，預設全開
+     * （現況四邊皆有動作）。總開關關閉時分項列停用、全部停用。
+     */
+    val edgeTopEnabled: Boolean = true,
+    val edgeBottomEnabled: Boolean = true,
+    val edgeLeftEnabled: Boolean = true,
+    val edgeRightEnabled: Boolean = true,
 ) {
 
     fun clamped(): GazeSettings {
@@ -93,6 +113,7 @@ data class GazeSettings(
             putLong(KEY_BLINK_MIN, blinkMinMs)
             putLong(KEY_BLINK_MAX, blinkMaxMs)
             putLong(KEY_BLINK_THRESHOLD, blinkThreshold.toRawBits())
+            putBoolean(KEY_BLINK_CLICK_ENABLED, blinkClickEnabled)
             putLong(KEY_FILTER_CUTOFF, filterMinCutoff.toRawBits())
             putLong(KEY_FILTER_BETA, filterBeta.toRawBits())
             putFloat(KEY_SENSITIVITY, sensitivity)
@@ -102,6 +123,11 @@ data class GazeSettings(
             putBoolean(KEY_DIAGNOSTIC_LOGGING, diagnosticLogging)
             putBoolean(KEY_REMOTE_MONITOR, remoteMonitor)
             putBoolean(KEY_IRIS_REFINEMENT, irisRefinement)
+            putBoolean(KEY_EDGE_GESTURES_ENABLED, edgeGesturesEnabled)
+            putBoolean(KEY_EDGE_TOP_ENABLED, edgeTopEnabled)
+            putBoolean(KEY_EDGE_BOTTOM_ENABLED, edgeBottomEnabled)
+            putBoolean(KEY_EDGE_LEFT_ENABLED, edgeLeftEnabled)
+            putBoolean(KEY_EDGE_RIGHT_ENABLED, edgeRightEnabled)
         }.apply()
     }
 
@@ -145,6 +171,7 @@ data class GazeSettings(
         private const val KEY_BLINK_MIN = "blink_min_ms"
         private const val KEY_BLINK_MAX = "blink_max_ms"
         private const val KEY_BLINK_THRESHOLD = "blink_threshold"
+        private const val KEY_BLINK_CLICK_ENABLED = "blink_click_enabled"
         private const val KEY_FILTER_CUTOFF = "filter_min_cutoff"
         private const val KEY_FILTER_BETA = "filter_beta"
         private const val KEY_SENSITIVITY = "sensitivity"
@@ -154,6 +181,11 @@ data class GazeSettings(
         private const val KEY_DIAGNOSTIC_LOGGING = "diagnostic_logging"
         private const val KEY_REMOTE_MONITOR = "remote_monitor"
         private const val KEY_IRIS_REFINEMENT = "iris_refinement"
+        private const val KEY_EDGE_GESTURES_ENABLED = "edge_gestures_enabled"
+        private const val KEY_EDGE_TOP_ENABLED = "edge_top_enabled"
+        private const val KEY_EDGE_BOTTOM_ENABLED = "edge_bottom_enabled"
+        private const val KEY_EDGE_LEFT_ENABLED = "edge_left_enabled"
+        private const val KEY_EDGE_RIGHT_ENABLED = "edge_right_enabled"
 
         fun load(context: Context): GazeSettings {
             // 存檔損毀（型別不符等）時直接回預設值，不要讓例外沿 prefs 監聽炸開服務
@@ -168,6 +200,10 @@ data class GazeSettings(
                     blinkThreshold = Double.fromBits(
                         p.getLong(KEY_BLINK_THRESHOLD, DEFAULT_BLINK_THRESHOLD.toRawBits())
                     ),
+                    // 眨眼點擊預設關閉（DCL-13）：從未存過該 key 時為關；
+                    // 使用者先前若未存過此 key，升級後眨眼點擊即關閉，須
+                    // 手動在設定頁開啟（現況行為改變為規格要求，非相容維持）。
+                    blinkClickEnabled = p.getBoolean(KEY_BLINK_CLICK_ENABLED, false),
                     filterMinCutoff = Double.fromBits(
                         p.getLong(KEY_FILTER_CUTOFF, DEFAULT_FILTER_MIN_CUTOFF.toRawBits())
                     ),
@@ -184,6 +220,13 @@ data class GazeSettings(
                     diagnosticLogging = p.getBoolean(KEY_DIAGNOSTIC_LOGGING, true),
                     remoteMonitor = p.getBoolean(KEY_REMOTE_MONITOR, true),
                     irisRefinement = p.getBoolean(KEY_IRIS_REFINEMENT, false),
+                    // 邊緣手勢預設開啟（現況行為）：getBoolean 預設值只在
+                    // 「從未存過該 key」時生效；使用者明確關掉後升級仍是關。
+                    edgeGesturesEnabled = p.getBoolean(KEY_EDGE_GESTURES_ENABLED, true),
+                    edgeTopEnabled = p.getBoolean(KEY_EDGE_TOP_ENABLED, true),
+                    edgeBottomEnabled = p.getBoolean(KEY_EDGE_BOTTOM_ENABLED, true),
+                    edgeLeftEnabled = p.getBoolean(KEY_EDGE_LEFT_ENABLED, true),
+                    edgeRightEnabled = p.getBoolean(KEY_EDGE_RIGHT_ENABLED, true),
                 ).clamped()
             } catch (e: Exception) {
                 GazeSettings()

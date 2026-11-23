@@ -90,6 +90,7 @@
                     android:textStyle="bold" />
 
                 <TextView
+                    android:id="@+id/welcomeCameraNote"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="只在手機上即時看眼睛位置，不存照片、不上傳。"
@@ -197,6 +198,7 @@
             app:cardElevation="0dp">
 
             <TextView
+                android:id="@+id/welcomePrivacyNote"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:padding="16dp"
@@ -222,7 +224,16 @@
             android:layout_width="match_parent"
             android:layout_height="@dimen/ec_button_height"
             android:layout_marginTop="4dp"
-            android:contentDescription="先看看主畫面，之後再設定"
+            android:contentDescription="先看看主畫面，之後可在設定頁重新執行引導"
             android:text="先看看主畫面" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:gravity="center"
+            android:text="設定引導共 6 步。先看看主畫面也沒關係，之後可以在設定頁重新執行引導。"
+            android:textColor="@color/ec_text_secondary"
+            android:textSize="@dimen/ec_text_small" />
     </LinearLayout>
 </ScrollView>
