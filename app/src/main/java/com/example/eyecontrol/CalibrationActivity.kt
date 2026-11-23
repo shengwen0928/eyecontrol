@@ -42,8 +42,10 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import com.google.android.material.button.MaterialButton
 import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 import kotlin.math.min
+import kotlin.math.pow
 
 /**
  * 9 點視線校正：依序顯示 3×3 目標點，使用者「頭保持不動、只用眼睛看」，
@@ -118,6 +120,19 @@ class CalibrationActivity : AppCompatActivity() {
 
     /** 與 pointBuffer 一一對應的每筆 log10(lux)，剔除離群值時跟著同一批樣本走。 */
     private val pointLightLogs = mutableListOf<Double>()
+
+    /** 與 pointBuffer 一一對應的相對時間（毫秒，相對本次校正首筆樣本），供逐筆紀錄分析跨輪與晃動。 */
+    private val pointSampleTimes = mutableListOf<Long>()
+
+    /**
+     * 校正逐筆紀錄（內部調校用）：每點全部原始樣本（含被離群值剔除的），附輪次、
+     * 目標、相對時間、裝置角度與光線；存檔成功後經 [uploadCalibLog] 上傳。
+     * 樣本只在記憶體，校正頁結束即丟棄，不留檔。
+     */
+    private val calibRows = mutableListOf<CalibLog.Row>()
+    private var calibT0Ms = 0L
+    private var calibUploaded = false
+    private var calibUploadCounter = 0
 
     /** 眼區反光指標樣本（有效幀），作為本次校正的眼鏡／反光基準。 */
     private val calibrationGlassesSamples = mutableListOf<Double>()
@@ -393,6 +408,7 @@ class CalibrationActivity : AppCompatActivity() {
         pointBuffer.clear()
         pointDeviceAngles.clear()
         pointLightLogs.clear()
+        pointSampleTimes.clear()
         settleUntil = SystemClock.elapsedRealtime() + SETTLE_MS
         pointStartedAt = SystemClock.elapsedRealtime()
         val (x, y) = points[index]
@@ -445,7 +461,9 @@ class CalibrationActivity : AppCompatActivity() {
         if (now < settleUntil) return // 等視線移過去、穩定下來
 
         val target = points[pointIndex]
+        if (calibT0Ms == 0L) calibT0Ms = now
         pointBuffer.add(sample.features)
+        pointSampleTimes.add(now - calibT0Ms)
         pointDeviceAngles.add(sample.devicePitch to sample.deviceRoll)
         // 光線與特徵平行記錄：剔除離群值時跟著同一批樣本走，永不脫鉤。
         pointLightLogs.add(GazeFeatureExtractor.lightLogLux(sample.ambientLux))
@@ -754,13 +772,14 @@ class CalibrationActivity : AppCompatActivity() {
 
         val keep = (pointBuffer.size * KEEP_RATIO).toInt().coerceAtLeast(1)
         // 依同一排序取同一批樣本：特徵、裝置角度、光線、輪次必須成對保留，否則基準與光跨度會錯位
-        pointBuffer.indices
+        val order = pointBuffer.indices
             .sortedBy { i ->
                 (0 until 4).sumOf { j ->
                     (pointBuffer[i][j] - centroid[j]) * (pointBuffer[i][j] - centroid[j])
                 }
             }
-            .take(keep)
+        val keptSet = order.take(keep).toSet()
+        order.take(keep)
             .forEach { i ->
                 allFeatures.add(pointBuffer[i])
                 allDeviceAngles.add(pointDeviceAngles[i])
@@ -768,6 +787,25 @@ class CalibrationActivity : AppCompatActivity() {
                 allPassIds.add(passIndex)
                 allTargets.add(target)
             }
+        // 逐筆紀錄：全部樣本都記（含被剔除的，kept 標示），供分析跨輪不一致
+        // 與手機晃動——訓練集只留排序後的前 keep 筆，紀錄必須在剔除前取全量。
+        for (i in pointBuffer.indices) {
+            calibRows.add(
+                CalibLog.Row(
+                    pass = passIndex,
+                    targetIndex = pointIndex,
+                    sampleIndex = i,
+                    tMs = pointSampleTimes[i],
+                    targetX = target.first,
+                    targetY = target.second,
+                    kept = i in keptSet,
+                    luxLog = pointLightLogs[i],
+                    devicePitch = pointDeviceAngles[i].first,
+                    deviceRoll = pointDeviceAngles[i].second,
+                    features = pointBuffer[i],
+                ),
+            )
+        }
         committedPoints++
         // 成功採樣即歸零：本點已完成，逾時計數不再累積。
         pointTimeoutCount = 0
@@ -851,6 +889,18 @@ class CalibrationActivity : AppCompatActivity() {
             ),
         )
         val calibratedAtMs = CalibrationStore.getMeta(this, profileId)?.calibratedAt ?: 0L
+        uploadCalibLog(
+            screenW = screenW,
+            screenH = screenH,
+            model = model,
+            inSampleErrorPx = report.inSampleMeanErrorPx,
+            looErrorPx = cvErr,
+            leavePassOutErrorPx = passErr,
+            worstPointIndex = worst.pointIndex,
+            worstErrorPx = worst.meanErrorPx,
+            perPoint = report.perPoint,
+            calibratedAtMs = calibratedAtMs,
+        )
         showReport(
             ReportData(
                 model = model,
@@ -868,6 +918,59 @@ class CalibrationActivity : AppCompatActivity() {
                 passCount = passIndex + 1,
             ),
         )
+    }
+
+    /**
+     * 上傳校正逐筆紀錄（暫時性診斷，調校完成後整段移除）。只在存檔成功後呼叫一次：
+     * 診斷紀錄與遠端監控兩開關皆開才傳（與游標紀錄同一閘門語意），Play 版再由
+     * [GazeLog] 內的 flavor 守衛擋下。失敗只走 Logcat（見 [GazeLog]），不打擾使用者。
+     * 重試儲存時 [calibUploaded] 擋重複上傳；重新校正時由 [recalibrate] 重置。
+     */
+    private fun uploadCalibLog(
+        screenW: Int,
+        screenH: Int,
+        model: GazeModel,
+        inSampleErrorPx: Double,
+        looErrorPx: Double,
+        leavePassOutErrorPx: Double,
+        worstPointIndex: Int,
+        worstErrorPx: Double,
+        perPoint: List<GazeEvaluator.PointError>,
+        calibratedAtMs: Long,
+    ) {
+        if (calibUploaded || calibRows.isEmpty()) return
+        if (!settings.diagnosticLogging || !settings.remoteMonitor) return
+        calibUploaded = true
+        val ts = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss-SSS", Locale.US).format(Date())
+        val id = "calib-$profileId-$ts-${calibUploadCounter++}"
+        val finiteLogs = allLightLogs.filter { it.isFinite() }
+        val lightMinLux = finiteLogs.minOrNull()?.let { 10.0.pow(it) } ?: Double.NaN
+        val lightMaxLux = finiteLogs.maxOrNull()?.let { 10.0.pow(it) } ?: Double.NaN
+        val perPointErrors = List(points.size) { idx ->
+            perPoint.firstOrNull { it.pointIndex == idx }?.meanErrorPx ?: Double.NaN
+        }
+        val summary = CalibLog.buildSummaryJson(
+            profileId = profileId,
+            passCount = passIndex + 1,
+            screenW = screenW,
+            screenH = screenH,
+            featureDim = calibRows.first().features.size,
+            inSampleErrorPx = inSampleErrorPx,
+            looErrorPx = looErrorPx,
+            leavePassOutErrorPx = leavePassOutErrorPx,
+            worstPointIndex = worstPointIndex,
+            worstErrorPx = worstErrorPx,
+            perPointErrors = perPointErrors,
+            lightMinLux = lightMinLux,
+            lightMaxLux = lightMaxLux,
+            lightMinLog = model.lightMinLog,
+            lightMaxLog = model.lightMaxLog,
+            calibratedAtMs = calibratedAtMs,
+            rowCount = calibRows.size,
+            keptRowCount = calibRows.count { it.kept },
+        )
+        GazeLog.uploadCalibration(id, CalibLog.buildCsv(calibRows), calibRows.size)
+        GazeLog.uploadCalibration("$id-sum", summary, 0)
     }
 
     /** D1-7：9 點完成後不立即 finish()，改顯示常駐報告頁；按「完成」才 finish()。 */
@@ -957,6 +1060,10 @@ class CalibrationActivity : AppCompatActivity() {
         pointBuffer.clear()
         pointDeviceAngles.clear()
         pointLightLogs.clear()
+        pointSampleTimes.clear()
+        calibRows.clear()
+        calibT0Ms = 0L
+        calibUploaded = false
         calibrationGlassesSamples.clear()
         committedPoints = 0
         pointTimeoutCount = 0

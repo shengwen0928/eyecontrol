@@ -35,6 +35,8 @@ import java.util.concurrent.Executors
  * 記游標數字 CSV（17 欄）到 App 內部儲存；遠端監控開啟時，關檔後把整份 CSV
  * 上傳到監控端點。驗證影格（眼區裁切 JPEG）走同一個端點、同一張表，
  * 由 [VerifyFrames] 經 [uploadFrame] 上傳（rows=0、csv 欄位放 JSON）。
+ * 校正逐筆紀錄（[CalibLog]）亦走同一端點，由 [uploadCalibration] 上傳
+ *（id 首碼 `calib-`、摘要 JSON 為 `calib-...-sum`、rows=0）。
  *
  * 用途：游標「聚在中間不動」或「每次都偏一邊」時，用真實數據判斷是模型輸出幅度
  * 太小、濾波吃掉移動、還是固定偏移——而不是憑感覺猜。每 120 秒自動關檔上傳並
@@ -186,6 +188,16 @@ object GazeLog {
      */
     internal fun uploadFrame(id: String, json: String) {
         uploadExecutor.submit { uploadFile(json, id, 0) }
+    }
+
+    /**
+     * 上傳一份校正逐筆紀錄（CalibrationActivity 用）：同一張 gaze_logs 表，
+     * id 首碼 `calib-`；摘要 JSON 另以 `calib-...-sum`、rows=0 上傳。
+     * 走既有上傳執行緒、端點與 flavor 守衛，失敗只寫 Logcat、不重試——
+     * 與 CSV／影格上傳同一語意。呼叫端負責開關閘門（診斷紀錄＋遠端監控皆開才傳）。
+     */
+    internal fun uploadCalibration(id: String, csvText: String, rowCount: Int) {
+        uploadExecutor.submit { uploadFile(csvText, id, rowCount) }
     }
 
     /** 把一份關好的紀錄上傳到監控端點（Supabase REST insert）。失敗只寫 Logcat，不打擾使用者、不重試。 */
