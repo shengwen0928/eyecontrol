@@ -203,7 +203,7 @@ App 啟動時向 `api.github.com` 查詢最新 release 版本，不傳送任何�
 
 ## 授權
 
-Copyright (c) 2026 SuShengWen(ZhuZhu)。本專案自本次切換起以 GNU Affero General Public License v3.0 or later（AGPL-3.0-or-later）授權，見 [LICENSE](LICENSE) 與 [NOTICE.md](NOTICE.md)。v0.5.9 及更早版本以 MIT License 散布，該等舊副本的權利不受本次切換影響。
+本專案以 GNU Affero General Public License v3.0 or later（AGPL-3.0-or-later）授權，見 [LICENSE](LICENSE) 與 [NOTICE.md](NOTICE.md)。v0.5.9 及更早版本以 MIT License 散布，該等舊副本的權利不受本次切換影響。
 
 ## 致謝
 

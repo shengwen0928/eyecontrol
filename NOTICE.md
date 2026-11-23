@@ -1,6 +1,6 @@
 # NOTICE
 
-Copyright (c) 2026 SuShengWen(ZhuZhu). Contact: ad565198ad56519867@gmail.com.
+Contact: ad565198ad56519867@gmail.com.
 
 This project is licensed under the GNU Affero General Public License v3.0 or later
 (AGPL-3.0-or-later); see LICENSE. This file lists third-party components included in
