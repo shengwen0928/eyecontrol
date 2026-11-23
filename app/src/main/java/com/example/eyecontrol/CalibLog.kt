@@ -65,7 +65,8 @@ object CalibLog {
     /**
      * 校正摘要 JSON（與樣本 CSV 分開上傳，rows=0）。數字皆取自報告頁同一批計算，
      * 不重新評估；非有限值記為 null。perPointErrors 依 pointIndex 順序。
-     * 被有效性檢查拒存時 refused 為 true，並附分離度與門檻（見 CalibrationGate）。
+     * 被有效性檢查拒存時 refused 為 true，並附分離度、絕對分離度與兩項門檻
+     * （見 CalibrationGate）。
      */
     fun buildSummaryJson(
         profileId: String,
@@ -90,8 +91,12 @@ object CalibLog {
         refused: Boolean = false,
         /** 有效性檢查的分離度；NaN 表無法量測。 */
         separationRatio: Double = Double.NaN,
-        /** 有效性檢查的門檻；NaN 表未執行檢查。 */
+        /** 有效性檢查的比值門檻；NaN 表未執行檢查。 */
         separationThreshold: Double = Double.NaN,
+        /** 有效性檢查的絕對分離度；NaN 表無法量測。 */
+        separation: Double = Double.NaN,
+        /** 有效性檢查的絕對分離度下限；NaN 表未執行檢查。 */
+        separationMin: Double = Double.NaN,
     ): String = buildString {
         append("{")
         append("\"profile\":").append(jsonStr(profileId)).append(',')
@@ -116,7 +121,9 @@ object CalibLog {
         append("\"keptRowCount\":").append(keptRowCount).append(',')
         append("\"refused\":").append(refused).append(',')
         append("\"separationRatio\":").append(num(separationRatio)).append(',')
-        append("\"separationThreshold\":").append(num(separationThreshold))
+        append("\"separationThreshold\":").append(num(separationThreshold)).append(',')
+        append("\"separation\":").append(num(separation)).append(',')
+        append("\"separationMin\":").append(num(separationMin))
         append("}")
     }
 

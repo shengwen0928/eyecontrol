@@ -123,9 +123,13 @@ class CalibLogTest {
             refused = true,
             separationRatio = 0.8,
             separationThreshold = 2.0,
+            separation = 0.03,
+            separationMin = 0.04,
         )
         assertTrue(json.contains("\"refused\":true"))
         assertTrue(json.contains("\"separationRatio\":0.800"))
         assertTrue(json.contains("\"separationThreshold\":2.000"))
+        assertTrue(json.contains("\"separation\":0.030"))
+        assertTrue(json.contains("\"separationMin\":0.040"))
     }
 }

@@ -15,11 +15,16 @@ package com.example.eyecontrol
  * 真的有跟著目標移動；全部看中間時九個中心擠在一起，比值趨近 1。只用留用
  * 進訓練集的樣本（與模型吃的同一批資料），被剔除的樣本不計。
  *
- * 門檻 [SEPARATION_RATIO_MIN] 為暫定值：以第一原理定（真實注視的組間移動
- * 應為注視抖動的數倍；看中間時比值約 1），必須以校正逐筆紀錄（calib- 上傳，
- * 含 refused 與 separationRatio 欄位）的真實數據複核、調整——見
- * docs/calibration-gate.md。門檻擋的是「退化資料」，不是「誤差大的真實校正」：
- * 留一法誤差再大，只要眼睛真的跟著目標跑，就放行（誤差由報告頁的等級明說）。
+ * 兩個條件須同時成立才存檔（2026-11-23 實機數據教訓）：比值只看「分離是雜訊
+ * 的幾倍」，雜訊極小時比值很大，但特徵絕對分離太小仍無法映射整個螢幕——
+ * 22:54 與 23:22 兩次單輪比值 11／14 卻留一法誤差 1122／1578 px，左右方向
+ * 幾乎沒分開。因此再加絕對分離度下限：中心間平均距離本身必須夠大。
+ *
+ * 門檻 [SEPARATION_RATIO_MIN] 與 [SEPARATION_MIN] 皆為暫定值，必須以校正逐筆
+ * 紀錄（calib- 上傳，摘要含 refused／separationRatio／separation／門檻欄位）
+ * 的真實數據複核、調整——見 docs/calibration-gate.md。門檻擋的是「退化資料」，
+ * 不是「誤差大的真實校正」：留一法誤差再大，只要眼睛真的跟著目標跑、且分離
+ * 夠大，就放行（誤差由報告頁的等級明說）。
  *
  * 純 Kotlin，不碰 Android API，可走 harness 測試。
  */
@@ -28,11 +33,20 @@ object CalibrationGate {
     /** 分離度門檻（暫定，待 calib- 真實數據複核）：低於此值視為退化資料、拒存。 */
     const val SEPARATION_RATIO_MIN = 2.0
 
+    /**
+     * 絕對分離度下限（暫定，待 calib- 真實數據複核）：九個目標中心間的平均距離
+     * 必須至少這麼大。實機依據（2026-11-23）：分離度 0.029／0.031 的兩次單輪
+     * 留一法誤差 1578／1122 px，0.047 的一次單輪留一法 309 px；下限 0.04 介於
+     * 其間。三輪 pooled 分離度 0.050 雖高於下限，仍被比值條件擋下——兩條件為
+     * 且（AND）關係。
+     */
+    const val SEPARATION_MIN = 0.04
+
     /** 參與檢查的特徵維度：虹膜相對位置 f[0..3]。 */
     const val IRIS_DIM = 4
 
     data class Result(
-        /** 是否通過（組數 >= 2 且分離度 >= 門檻）。 */
+        /** 是否通過（組數 >= 2，且分離度 >= 比值門檻，且絕對分離度 >= 下限）。 */
         val passed: Boolean,
         /** 組間分離度／組內雜訊；無有效組時為 NaN。 */
         val separationRatio: Double,
@@ -95,7 +109,7 @@ object CalibrationGate {
         // 雜訊為 0 時（同一組樣本完全相同）比值以極大有限值計：中心有分開即通過。
         val ratio = separation / maxOf(noise, 1e-9)
         return Result(
-            passed = ratio >= SEPARATION_RATIO_MIN,
+            passed = ratio >= SEPARATION_RATIO_MIN && separation >= SEPARATION_MIN,
             separationRatio = ratio,
             separation = separation,
             noise = noise,

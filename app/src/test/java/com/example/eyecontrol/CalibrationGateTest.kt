@@ -93,6 +93,38 @@ class CalibrationGateTest {
     }
 
     @Test
+    fun highRatioTinySeparation_fails() {
+        // 比值很大（雜訊極小）但絕對分離 0.03 低於下限 0.04：兩條件為且，不通過。
+        // 實機對照：22:54／23:22 兩次單輪比值 11／14、絕對分離 0.031／0.029，
+        // 留一法誤差卻 1122／1578 px。
+        val features = listOf(
+            sample(0.0, 0.0), sample(0.001, 0.0), sample(0.0, 0.001),
+            sample(0.03, 0.0), sample(0.031, 0.0), sample(0.03, 0.001),
+        )
+        val targets = listOf(0f to 0f, 0f to 0f, 0f to 0f, 1f to 0f, 1f to 0f, 1f to 0f)
+        val r = CalibrationGate.evaluate(features, targets)
+        assertTrue(r.separationRatio > CalibrationGate.SEPARATION_RATIO_MIN)
+        assertTrue(r.separation < CalibrationGate.SEPARATION_MIN)
+        assertFalse(r.passed)
+    }
+
+    @Test
+    fun separationAtFloor_passes() {
+        // 絕對分離 0.05 高於下限、比值也高於門檻：兩條件皆成立，通過。
+        val features = listOf(
+            sample(0.0, 0.0), sample(0.01, 0.0), sample(0.0, 0.01), sample(0.01, 0.01),
+            sample(0.05, 0.0), sample(0.06, 0.0), sample(0.05, 0.01), sample(0.06, 0.01),
+        )
+        val targets = listOf(
+            0f to 0f, 0f to 0f, 0f to 0f, 0f to 0f,
+            1f to 0f, 1f to 0f, 1f to 0f, 1f to 0f,
+        )
+        val r = CalibrationGate.evaluate(features, targets)
+        assertTrue(r.separation >= CalibrationGate.SEPARATION_MIN)
+        assertTrue(r.passed)
+    }
+
+    @Test
     fun noisyButSeparated_failsWhenRatioBelowThreshold() {
         // 中心分離 10、組內樣本到中心平均約 5.7：比值約 1.8，低於門檻，不通過。
         val features = listOf(

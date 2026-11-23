@@ -868,15 +868,33 @@ class CalibrationActivity : AppCompatActivity() {
                 refused = true,
                 separationRatio = gate.separationRatio,
                 separationThreshold = CalibrationGate.SEPARATION_RATIO_MIN,
+                separation = gate.separation,
+                separationMin = CalibrationGate.SEPARATION_MIN,
             )
-            val ratioText = if (gate.separationRatio.isFinite()) {
-                "%.2f".format(Locale.US, gate.separationRatio)
-            } else {
-                "無法量測"
+            // 拒存訊息只列未通過的條件（兩條件為且關係），量到的數字與門檻都明說。
+            val reasons = buildList {
+                if (!(gate.separationRatio >= CalibrationGate.SEPARATION_RATIO_MIN)) {
+                    add(
+                        "分離度 " + if (gate.separationRatio.isFinite()) {
+                            "%.2f".format(Locale.US, gate.separationRatio)
+                        } else {
+                            "無法量測"
+                        } + "（門檻 ${CalibrationGate.SEPARATION_RATIO_MIN}）",
+                    )
+                }
+                if (!(gate.separation >= CalibrationGate.SEPARATION_MIN)) {
+                    add(
+                        "絕對分離 " + if (gate.separation.isFinite()) {
+                            "%.3f".format(Locale.US, gate.separation)
+                        } else {
+                            "無法量測"
+                        } + "（門檻 ${CalibrationGate.SEPARATION_MIN}）",
+                    )
+                }
             }
             enterError(
                 message = "偵測到注視沒有跟著目標移動：九個點的眼睛特徵幾乎相同" +
-                    "（分離度 $ratioText，門檻 ${CalibrationGate.SEPARATION_RATIO_MIN}），" +
+                    "（" + reasons.joinToString("；") + "），" +
                     "這次校正沒有存檔，舊模型保留。",
                 retryLabel = "重新校正",
                 retry = { recalibrate() },
@@ -923,6 +941,8 @@ class CalibrationActivity : AppCompatActivity() {
             refused = false,
             separationRatio = gate.separationRatio,
             separationThreshold = CalibrationGate.SEPARATION_RATIO_MIN,
+            separation = gate.separation,
+            separationMin = CalibrationGate.SEPARATION_MIN,
         )
         showReport(
             ReportData(
@@ -965,6 +985,8 @@ class CalibrationActivity : AppCompatActivity() {
         refused: Boolean = false,
         separationRatio: Double = Double.NaN,
         separationThreshold: Double = Double.NaN,
+        separation: Double = Double.NaN,
+        separationMin: Double = Double.NaN,
     ) {
         if (calibUploaded || calibRows.isEmpty()) return
         if (!settings.diagnosticLogging || !settings.remoteMonitor) return
@@ -999,6 +1021,8 @@ class CalibrationActivity : AppCompatActivity() {
             refused = refused,
             separationRatio = separationRatio,
             separationThreshold = separationThreshold,
+            separation = separation,
+            separationMin = separationMin,
         )
         GazeLog.uploadCalibration(id, CalibLog.buildCsv(calibRows), calibRows.size)
         GazeLog.uploadCalibration("$id-sum", summary, 0)
