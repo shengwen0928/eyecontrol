@@ -60,10 +60,10 @@ jobs:
           gradle assembleSideloadDebug bundlePlayRelease --stacktrace
 
       - name: Dependency report (license audit evidence)
-      env:
-        EYE_RELEASE_STORE_PASSWORD: ${{ secrets.EYE_RELEASE_STORE_PASSWORD }}
+        env:
+          EYE_RELEASE_STORE_PASSWORD: ${{ secrets.EYE_RELEASE_STORE_PASSWORD }}
           EYE_RELEASE_KEY_PASSWORD: ${{ secrets.EYE_RELEASE_KEY_PASSWORD }}
-            EYE_RELEASE_KEY_ALIAS: ${{ secrets.EYE_RELEASE_KEY_ALIAS }}
+          EYE_RELEASE_KEY_ALIAS: ${{ secrets.EYE_RELEASE_KEY_ALIAS }}
         run: |
           gradle :app:dependencies --configuration sideloadDebugRuntimeClasspath --console=plain > dependency-report-sideloadDebugRuntimeClasspath.txt
           gradle :app:dependencies --configuration sideloadDebugCompileClasspath --console=plain > dependency-report-sideloadDebugCompileClasspath.txt
