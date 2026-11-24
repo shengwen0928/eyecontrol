@@ -123,6 +123,9 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
 
     private val filterX = OneEuroFilter(minCutoff = 0.2, beta = 0.015)
     private val filterY = OneEuroFilter(minCutoff = 0.2, beta = 0.015)
+    // 游標靜止鎖定：濾波後座標小範圍抖動時凍住游標（見 StabilityLock）；
+    // 與濾波器同一組重置點（旋轉、引擎重啟、臉遺失、重啟驗證成功）。
+    private val stabilityLock = StabilityLock()
 
     /** 校正頁開啟期間暫停追蹤（相機同程序只有一路，兩邊搶會互踢）。 */
     @Volatile
@@ -402,6 +405,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         screenH = bounds.height()
         filterX.reset()
         filterY.reset()
+        stabilityLock.reset()
         // 旋轉後座標系全變：提醒收掉、條件狀態重置，等下次評估重新推算
         reloadConditionState()
         // 方向改變：邊緣手勢強制重置（D-3 防止重複觸發段），確認目標收掉；
@@ -445,6 +449,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         }
         filterX.reset()
         filterY.reset()
+        stabilityLock.reset()
         reloadConditionState()
         engine = FaceTrackerEngine(this) { sample -> onSample(sample) }
         try {
@@ -578,6 +583,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             controlView?.invalidate()
             filterX.reset()
             filterY.reset()
+            stabilityLock.reset()
             cancelPendingDoubleTap()
             // 診斷紀錄也要記臉遺失幀：邊緣看不到臉時，游標不動可能是追蹤丟失而非模型問題。
             // 偏移記目前實際套用的值（與主路徑同一算法），免得摘要的平均偏移被 0 拉偏。
@@ -748,8 +754,16 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
         }
 
         val t = sample.timestampMs / 1000.0
-        val x = filterX.filter(gainedX, t).toFloat().coerceIn(0f, screenW - 1f)
-        val y = filterY.filter(gainedY, t).toFloat().coerceIn(0f, screenH - 1f)
+        var x = filterX.filter(gainedX, t).toFloat().coerceIn(0f, screenW - 1f)
+        var y = filterY.filter(gainedY, t).toFloat().coerceIn(0f, screenH - 1f)
+
+        // 游標靜止鎖定（2026-11-24，實機 51 欄數據為據）：濾波後座標仍抖，
+        // 小範圍抖動時凍住游標，視線真的移開才解鎖。鎖定後座標餵給下游全部
+        // 共用點（游標顯示、停留、邊緣、面板）；診斷紀錄的 cur 欄即顯示座標，
+        // 抖動證據保留在 raw 欄。
+        val (lockedX, lockedY) = stabilityLock.update(x, y)
+        x = lockedX
+        y = lockedY
 
         // 更新最後的有效位置
         lastCursorX = x
@@ -1593,6 +1607,7 @@ class GazeAccessibilityService : AccessibilityService(), LifecycleOwner {
             // 引擎本就跑著：顯式做 (d) 重置，與 startEngine 內的重置同一組。
             filterX.reset()
             filterY.reset()
+            stabilityLock.reset()
             reloadConditionState()
         }
         inRecoveryMode = false
